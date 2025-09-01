@@ -1,0 +1,347 @@
+@page "/"
+@using System.Globalization
+
+<PageTitle>Gantt</PageTitle>
+
+<style>
+    table { border-collapse: collapse; width: 100%; }
+    th, td { outline: 1px solid #aaa; padding: 0; vertical-align: top; }
+    th.time { text-align: center; font-weight: 600; font-size: 12px; height: 28px; }
+    th.machine { width: 180px; text-align: left; padding: 4px 8px; }
+    td.machine { padding: 4px 8px; font-weight: 600; white-space: nowrap; }
+    td.slot { width: 48px; height: 36px; }
+    .stack { display: flex; flex-direction: column; width: 100%; height: 100%; }
+    .slice { width: 100%; }
+    .bar { width: 100%; height: 100%; }
+    .toolbar { margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
+    .legend { margin-left: auto; opacity: 0.7; font-size: 12px; }
+</style>
+
+<div class="toolbar">
+    <button @onclick="() => SetView(CalendarView.Month)">Month</button>
+    <button @onclick="() => SetView(CalendarView.Week)">Week</button>
+    <button @onclick="() => SetView(CalendarView.Day)">Day</button>
+    <span style="margin-left:12px; font-weight:bold;">@ViewTitle</span>
+    <button style="margin-left:auto" @onclick="Prev">Prev</button>
+    <button @onclick="Today">Today</button>
+    <button @onclick="Next">Next</button>
+    <span class="legend">Gantt view of machine events — drag to move/resize; labels shown</span>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th class="machine">Machine</th>
+            @for (int c = 0; c < Cols; c++)
+            {
+                <th class="time">@HeaderForColumn(c)</th>
+            }
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var m in machines)
+    {
+        <tr>
+            <td class="machine">@m.Name</td>
+            @for (int c = 0; c < Cols; c++)
+            {
+                int slotIdx = c; // 0..Cols-1
+                var inSlot = EventsInSlot(m.Id, slotIdx).ToList();
+                <td class="slot" @onmouseup="(e) => OnCellMouseUp(e, m.Id, slotIdx)">
+                    @if (inSlot.Count > 0)
+                    {
+                        var h = SliceHeight(inSlot.Count);
+                        <div class="stack">
+                            @foreach (var ev in inSlot)
+                            {
+                                var sIdx = GetEventStartIndex(ev);
+                                var eIdx = GetEventEndIndex(ev);
+                                <div class="slice" style="height:@h">
+                                    @if (sIdx == eIdx && slotIdx == sIdx)
+                                    {
+                                        <div style="display:flex; width:100%; height:100%">
+                                            <div class="bar" title="@ev.Title" style="background-color:@ev.Color; width:20%; height:100%; display:flex; align-items:center; justify-content:center; user-select:none; cursor:grab;"
+                                                 @onmousedown:preventDefault @onmousedown="(e) => OnStartMouseDown(e, ev, slotIdx)">[
+                                            </div>
+                                            <div class="bar" title="@ev.Title" style="background-color:@ev.Color; width:60%; height:100%; display:flex; align-items:center; padding:0 4px; box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; user-select:none; cursor:grab;"
+                                                 @onmousedown:preventDefault @onmousedown="(e) => OnBodyMouseDown(e, ev, slotIdx)">
+                                                @ev.Title
+                                            </div>
+                                            <div class="bar" title="@ev.Title" style="background-color:@ev.Color; width:20%; height:100%; display:flex; align-items:center; justify-content:center; user-select:none; cursor:grab;"
+                                                 @onmousedown:preventDefault @onmousedown="(e) => OnEndMouseDown(e, ev, slotIdx)">]
+                                            </div>
+                                        </div>
+                                    }
+                                    else if (slotIdx == sIdx)
+                                    {
+                                        <div class="bar" title="@ev.Title" style="background-color:@ev.Color; width:100%; height:100%; display:flex; align-items:center; padding:0 4px; box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; user-select:none; cursor:grab;"
+                                             @onmousedown:preventDefault @onmousedown="(e) => OnStartMouseDown(e, ev, slotIdx)">
+                                            [ @ev.Title
+                                        </div>
+                                    }
+                                    else if (slotIdx == eIdx)
+                                    {
+                                        <div class="bar" title="@ev.Title" style="background-color:@ev.Color; width:100%; height:100%; display:flex; align-items:center; padding:0 4px; box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; user-select:none; cursor:grab;"
+                                             @onmousedown:preventDefault @onmousedown="(e) => OnEndMouseDown(e, ev, slotIdx)">
+                                            @ev.Title ]
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="bar" title="@ev.Title" style="background-color:@ev.Color; width:100%; height:100%; display:flex; align-items:center; padding:0 4px; box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; user-select:none; cursor:grab;"
+                                             @onmousedown:preventDefault @onmousedown="(e) => OnBodyMouseDown(e, ev, slotIdx)">
+                                            @ev.Title
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </td>
+            }
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    // Views/time axis
+    enum CalendarView { Month, Week, Day }
+    CalendarView view = CalendarView.Month;
+    DateTime currentDate = DateTime.Today;
+
+    // Domain models
+    public class Machine
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public string Name { get; set; } = string.Empty;
+    }
+    public class MachineEvent
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public Guid MachineId { get; set; }
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Color { get; set; } = "#64B5F6";
+    }
+
+    // Sample data
+    List<Machine> machines = new()
+    {
+        new Machine { Name = "Lathe-01" },
+        new Machine { Name = "Mill-02" },
+        new Machine { Name = "Cutter-03" }
+    };
+
+    List<MachineEvent> events = new();
+
+    // Initialize sample events tied to machines
+    protected override void OnInitialized()
+    {
+        var rng = new Random(1);
+        string[] palette = { "#E57373", "#64B5F6", "#81C784", "#FFD54F", "#BA68C8", "#4DB6AC", "#FF8A65", "#A1887F", "#90A4AE", "#F06292", "#7986CB" };
+        DateTime baseDay = DateTime.Today.AddDays(-3);
+        // attach a couple events per machine
+        foreach (var (m, i) in machines.Select((m, i) => (m, i)))
+        {
+            var color1 = palette[rng.Next(palette.Length)];
+            var color2 = palette[rng.Next(palette.Length)];
+            // An all-day style (month/week) or multi-hour (day/week) event
+            events.Add(new MachineEvent
+            {
+                MachineId = m.Id,
+                Start = baseDay.AddDays(i + 1).AddHours(8),
+                End = baseDay.AddDays(i + 2).AddHours(16),
+                Title = $"Job A ({m.Name})",
+                Color = color1
+            });
+            events.Add(new MachineEvent
+            {
+                MachineId = m.Id,
+                Start = baseDay.AddDays(i + 2).AddHours(9),
+                End = baseDay.AddDays(i + 2).AddHours(12),
+                Title = $"Job B ({m.Name})",
+                Color = color2
+            });
+        }
+    }
+
+    // View sizing
+    int Cols => view switch
+    {
+        CalendarView.Month => DaysInMonth(currentDate),
+        CalendarView.Week => 7,
+        CalendarView.Day => 24,
+        _ => 7
+    };
+
+    // Headers and view title
+    private string ViewTitle => view switch
+    {
+        CalendarView.Month => currentDate.ToString("Y"),
+        CalendarView.Week => $"Week of {WeekStart(currentDate):d}",
+        CalendarView.Day => currentDate.ToString("D"),
+        _ => string.Empty
+    };
+
+    private string HeaderForColumn(int c)
+    {
+        return view switch
+        {
+            CalendarView.Month => FirstOfMonth(currentDate).AddDays(c).ToString("dd"),
+            CalendarView.Week => WeekStart(currentDate).AddDays(c).ToString("ddd dd"),
+            CalendarView.Day => TimeOnly.FromDateTime(DateTime.Today).AddHours(c).ToString("HH:00"),
+            _ => string.Empty
+        };
+    }
+
+    // Time math helpers
+    private static DayOfWeek FirstDayOfWeek => CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+    private static DateTime WeekStart(DateTime d)
+    {
+        int diff = ((int)d.DayOfWeek - (int)FirstDayOfWeek + 7) % 7;
+        return d.Date.AddDays(-diff);
+    }
+    private static DateTime FirstOfMonth(DateTime d) => new(d.Year, d.Month, 1);
+    private static int DaysInMonth(DateTime d) => DateTime.DaysInMonth(d.Year, d.Month);
+
+    private DateTime ViewStart() => view switch
+    {
+        CalendarView.Month => FirstOfMonth(currentDate),
+        CalendarView.Week => WeekStart(currentDate),
+        CalendarView.Day => currentDate.Date,
+        _ => currentDate.Date
+    };
+    private TimeSpan SlotSize() => view == CalendarView.Day ? TimeSpan.FromHours(1) : TimeSpan.FromDays(1);
+
+    // Slot mapping: inclusive indices
+    private int GetEventStartIndex(MachineEvent ev)
+    {
+        var start = ViewStart();
+        double units = (view == CalendarView.Day) ? (ev.Start - start).TotalHours : (ev.Start - start).TotalDays;
+        return (int)Math.Floor(units);
+    }
+    private int GetEventEndIndex(MachineEvent ev)
+    {
+        var start = ViewStart();
+        double units = (view == CalendarView.Day) ? (ev.End - start).TotalHours : (ev.End - start).TotalDays;
+        return (int)Math.Floor(units);
+    }
+
+    // Overlap stacking per slot
+    private IEnumerable<MachineEvent> EventsInSlot(Guid machineId, int slotIndex)
+    {
+        foreach (var ev in events)
+        {
+            if (ev.MachineId != machineId) continue;
+            int s = GetEventStartIndex(ev);
+            int e = GetEventEndIndex(ev);
+            if (slotIndex >= s && slotIndex <= e)
+                yield return ev;
+        }
+    }
+
+    private static string SliceHeight(int count) => count <= 0 ? "0%" : $"{100.0 / count}%";
+
+    // Toolbar actions
+    private void SetView(CalendarView v) { view = v; StateHasChanged(); }
+    private void Today() { currentDate = DateTime.Today; StateHasChanged(); }
+    private void Prev()
+    {
+        currentDate = view switch
+        {
+            CalendarView.Month => currentDate.AddMonths(-1),
+            CalendarView.Week => currentDate.AddDays(-7),
+            CalendarView.Day => currentDate.AddDays(-1),
+            _ => currentDate
+        }; StateHasChanged();
+    }
+    private void Next()
+    {
+        currentDate = view switch
+        {
+            CalendarView.Month => currentDate.AddMonths(1),
+            CalendarView.Week => currentDate.AddDays(7),
+            CalendarView.Day => currentDate.AddDays(1),
+            _ => currentDate
+        }; StateHasChanged();
+    }
+
+    // Drag state and helpers (non-JS interop)
+    enum DragMode { None, Move, ResizeStart, ResizeEnd }
+    bool dragging = false;
+    DragMode dragMode = DragMode.None;
+    int dragOffsetSlots = 0;
+    MachineEvent? activeEvent = null;
+
+    private static int Clamp(int v, int min, int max) => Math.Max(min, Math.Min(max, v));
+
+    private void OnBodyMouseDown(MouseEventArgs e, MachineEvent ev, int slotIdx)
+    {
+        if (e.Button != 0) return; // left button only
+        int sIdx = GetEventStartIndex(ev);
+        dragging = true;
+        dragMode = DragMode.Move;
+        activeEvent = ev;
+        dragOffsetSlots = slotIdx - sIdx;
+    }
+
+    private void OnStartMouseDown(MouseEventArgs e, MachineEvent ev, int slotIdx)
+    {
+        if (e.Button != 0) return;
+        dragging = true;
+        dragMode = DragMode.ResizeStart;
+        activeEvent = ev;
+    }
+
+    private void OnEndMouseDown(MouseEventArgs e, MachineEvent ev, int slotIdx)
+    {
+        if (e.Button != 0) return;
+        dragging = true;
+        dragMode = DragMode.ResizeEnd;
+        activeEvent = ev;
+    }
+
+    private void OnCellMouseUp(MouseEventArgs e, Guid machineId, int slotIdx)
+    {
+        if (!dragging || activeEvent is null) return;
+
+        var viewStart = ViewStart();
+        var slot = SlotSize();
+        int sIdx = GetEventStartIndex(activeEvent);
+        int eIdx = GetEventEndIndex(activeEvent);
+        int length = eIdx - sIdx; // inclusive distance in slots
+
+        switch (dragMode)
+        {
+            case DragMode.Move:
+                {
+                    int newStartIndex = Clamp(slotIdx - dragOffsetSlots, 0, Cols - 1 - length);
+                    DateTime newStart = viewStart + slot * newStartIndex;
+                    DateTime newEnd = newStart + slot * length;
+                    activeEvent.Start = newStart;
+                    activeEvent.End = newEnd;
+                    activeEvent.MachineId = machineId; // allow moving across machines
+                    break;
+                }
+            case DragMode.ResizeStart:
+                {
+                    int newStartIndex = Clamp(Math.Min(slotIdx, eIdx), 0, eIdx);
+                    activeEvent.Start = viewStart + slot * newStartIndex;
+                    break;
+                }
+            case DragMode.ResizeEnd:
+                {
+                    int newEndIndex = Clamp(Math.Max(slotIdx, sIdx), sIdx, Cols - 1);
+                    activeEvent.End = viewStart + slot * newEndIndex;
+                    break;
+                }
+        }
+
+        dragging = false;
+        dragMode = DragMode.None;
+        activeEvent = null;
+        StateHasChanged();
+    }
+}

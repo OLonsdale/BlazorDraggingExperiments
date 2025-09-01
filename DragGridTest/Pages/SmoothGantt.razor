@@ -1,0 +1,278 @@
+@page "/smooth-gantt"
+@using System.Globalization
+
+<PageTitle>Smooth Gantt</PageTitle>
+
+<style>
+    .sg-toolbar { margin-bottom:8px; display:flex; gap:8px; align-items:center; }
+    .sg-legend { margin-left:auto; opacity:0.7; font-size:12px; }
+    .sg-wrap { border:1px solid #aaa; overflow-x:auto; overflow-y:hidden; }
+    .sg-header { position:relative; height:28px; border-bottom:1px solid #aaa; font-size:12px; }
+    .sg-body { display:grid; grid-template-columns: 180px 1fr; height:420px; }
+    .sg-machines { border-right:1px solid #aaa; }
+    .sg-row { height:36px; display:flex; align-items:center; padding:0 8px; border-bottom:1px solid #ddd; white-space:nowrap; }
+    .sg-timeline { position:relative; }
+    .sg-track { position:relative; height:36px; border-bottom:1px solid #ddd; }
+    .sg-tick { position:absolute; top:0; bottom:0; width:1px; background:#bbb; }
+    .sg-tick-label { position:absolute; top:0; font-size:11px; padding:2px 4px; background:rgba(255,255,255,0.75); white-space:nowrap; }
+    .sg-bar { position:absolute; height:24px; top:6px; border-radius:3px; overflow:hidden; cursor:grab; }
+    .sg-bar-inner { height:100%; opacity:0.9; position:relative; }
+    .sg-handle { position:absolute; top:0; bottom:0; width:10px; cursor:ew-resize; opacity:0.8; }
+    .sg-handle.left { left:0; border-left:3px solid rgba(0,0,0,0.35); }
+    .sg-handle.right { right:0; border-right:3px solid rgba(0,0,0,0.35); }
+</style>
+
+<div class="sg-toolbar">
+    <button @onclick="ZoomOut">-</button>
+    <button @onclick="ZoomIn">+</button>
+    <button style="margin-left:12px" @onclick="Prev">Prev</button>
+    <button @onclick="Today">Today</button>
+    <button @onclick="Next">Next</button>
+    <span class="sg-legend">Smooth Gantt — wheel to zoom (center-anchored), no JS interop</span>
+</div>
+
+<div class="sg-wrap" @onwheel="OnWheel" @onmouseup="OnMouseUp">
+    <!-- Header timeline -->
+    <div class="sg-header" style="width:@Px(TotalWidthPx)px">
+        @foreach (var tick in ComputeTicks())
+        {
+            <div class="sg-tick" style="left:@Px(tick.X)px"></div>
+            <div class="sg-tick-label" style="left:@Px(tick.X + 2)px">@tick.Label</div>
+        }
+    </div>
+
+    <!-- Body: machines + tracks -->
+    <div class="sg-body">
+        <div class="sg-machines">
+            @foreach (var m in machines)
+            {
+                <div class="sg-row">@m.Name</div>
+            }
+        </div>
+        <div class="sg-timeline" style="width:@Px(TotalWidthPx)px" @onmousemove="OnMouseMove">
+            @for (int i = 0; i < machines.Count; i++)
+            {
+                var m = machines[i];
+                <div class="sg-track">
+                    @foreach (var ev in events.Where(e => e.MachineId == m.Id))
+                    {
+                        var left = XFromTime(ev.Start);
+                        var width = Math.Max(1, XFromTime(ev.End) - left);
+                        <div class="sg-bar" style="left:@Px(left)px; width:@Px(width)px">
+                            <div class="sg-bar-inner" style="background-color:@ev.Color" title="@ev.Title"
+                                 @onmousedown:preventDefault @onmousedown="(e) => OnBarBodyMouseDown(e, ev)">
+                                @ev.Title
+                                <div class="sg-handle left" style="background-color:@ev.Color"
+                                     @onmousedown:preventDefault @onmousedown="(e) => OnBarStartHandleMouseDown(e, ev)"></div>
+                                <div class="sg-handle right" style="background-color:@ev.Color"
+                                     @onmousedown:preventDefault @onmousedown="(e) => OnBarEndHandleMouseDown(e, ev)"></div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    // Data
+    public class Machine { public Guid Id { get; set; } = Guid.NewGuid(); public string Name { get; set; } = string.Empty; }
+    public class MachineEvent { public Guid Id { get; set; } = Guid.NewGuid(); public Guid MachineId { get; set; } public DateTime Start { get; set; } public DateTime End { get; set; } public string Title { get; set; } = string.Empty; public string Color { get; set; } = "#64B5F6"; }
+
+    List<Machine> machines = new()
+    {
+        new() { Name = "Lathe-01" },
+        new() { Name = "Mill-02" },
+        new() { Name = "Cutter-03" }
+    };
+    List<MachineEvent> events = new();
+
+    protected override void OnInitialized()
+    {
+        var rng = new Random(1);
+        string[] palette = ["#E57373", "#64B5F6", "#81C784", "#FFD54F", "#BA68C8", "#4DB6AC", "#FF8A65", "#A1887F", "#90A4AE", "#F06292", "#7986CB"];
+        DateTime baseDay = DateTime.Today.AddDays(-3);
+        foreach (var (m, i) in machines.Select((m, i) => (m, i)))
+        {
+            var color1 = palette[rng.Next(palette.Length)];
+            var color2 = palette[rng.Next(palette.Length)];
+            events.Add(new MachineEvent { MachineId = m.Id, Start = baseDay.AddDays(i + 1).AddHours(8), End = baseDay.AddDays(i + 2).AddHours(16), Title = $"Job A ({m.Name})", Color = color1 });
+            events.Add(new MachineEvent { MachineId = m.Id, Start = baseDay.AddDays(i + 2).AddHours(9), End = baseDay.AddDays(i + 2).AddHours(12), Title = $"Job B ({m.Name})", Color = color2 });
+        }
+    }
+
+    // Time window and scale (continuous)
+    DateTime windowStart = DateTime.Today.AddDays(-3);
+    TimeSpan windowDuration = TimeSpan.FromDays(14); // visible window
+    double pxPerHour = 8; // base scale
+
+    // Helpers
+    private double TotalWidthPx => windowDuration.TotalHours * pxPerHour;
+    private double XFromTime(DateTime t) => (t - windowStart).TotalHours * pxPerHour;
+    private double Px(double x) => Math.Round(x, 2);
+
+    // Dragging state
+    enum DragMode { None, Move, ResizeStart, ResizeEnd }
+    bool dragging = false;
+    DragMode dragMode = DragMode.None;
+    MachineEvent? activeEvent = null;
+    double dragStartContentX = 0;
+    DateTime dragStartStartTime;
+    DateTime dragStartEndTime;
+
+    private const int HandlePx = 10; // fixed handle width in px
+
+    // Utility
+    private static DateTime SnapToMinutes(DateTime t, int minutes)
+    {
+        var snapped = new DateTime(t.Year, t.Month, t.Day, t.Hour, t.Minute, 0);
+        var totalMinutes = (int)Math.Round(snapped.TimeOfDay.TotalMinutes / minutes) * minutes;
+        return t.Date.AddMinutes(totalMinutes);
+    }
+
+    private void BeginDrag(MouseEventArgs e, MachineEvent ev, DragMode mode)
+    {
+        if (e.Button != 0) return;
+        dragging = true;
+        activeEvent = ev;
+        // Convert the mousedown to timeline-relative coordinates
+        // On body/handles we attach to elements inside the bar; use the bar's start as origin
+        // Use lastMouseContentX as the content X under the mouse at the time of mousedown
+        dragStartContentX = lastMouseContentX;
+        dragStartStartTime = ev.Start;
+        dragStartEndTime = ev.End;
+        dragMode = mode;
+    }
+
+    private void OnBarBodyMouseDown(MouseEventArgs e, MachineEvent ev) => BeginDrag(e, ev, DragMode.Move);
+    private void OnBarStartHandleMouseDown(MouseEventArgs e, MachineEvent ev) => BeginDrag(e, ev, DragMode.ResizeStart);
+    private void OnBarEndHandleMouseDown(MouseEventArgs e, MachineEvent ev) => BeginDrag(e, ev, DragMode.ResizeEnd);
+
+    private void OnDragMove(MouseEventArgs e)
+    {
+        if (!dragging || activeEvent is null) return;
+        // current absolute content X under mouse (relative to timeline)
+        double currentContentX = e.OffsetX;
+        // delta hours based on movement relative to drag start reference (both in timeline coords)
+        var dxPx = currentContentX - dragStartContentX;
+        var deltaHours = dxPx / pxPerHour;
+        const int snap = 10; // minutes
+        switch (dragMode)
+        {
+            case DragMode.Move:
+            {
+                var newStart = dragStartStartTime.AddHours(deltaHours);
+                var newEnd = dragStartEndTime.AddHours(deltaHours);
+                activeEvent.Start = SnapToMinutes(newStart, snap);
+                activeEvent.End = SnapToMinutes(newEnd, snap);
+                break;
+            }
+            case DragMode.ResizeStart:
+            {
+                var proposed = dragStartStartTime.AddHours(deltaHours);
+                if (proposed > activeEvent.End) proposed = activeEvent.End;
+                activeEvent.Start = SnapToMinutes(proposed, snap);
+                break;
+            }
+            case DragMode.ResizeEnd:
+            {
+                var proposed = dragStartEndTime.AddHours(deltaHours);
+                if (proposed < activeEvent.Start) proposed = activeEvent.Start;
+                activeEvent.End = SnapToMinutes(proposed, snap);
+                break;
+            }
+        }
+        StateHasChanged();
+    }
+
+    // Ticks (adaptive: days or hours based on pxPerHour)
+    private record Tick(double X, string Label);
+    private IEnumerable<Tick> ComputeTicks()
+    {
+        var list = new List<Tick>();
+        if (pxPerHour < 8)
+        {
+            // Day-level ticks
+            var startDay = windowStart.Date;
+            var end = windowStart + windowDuration;
+            for (var d = startDay; d <= end; d = d.AddDays(1))
+            {
+                var x = XFromTime(d);
+                list.Add(new Tick(x, d.ToString("dd MMM")));
+            }
+        }
+        else
+        {
+            // Hour-level ticks with adaptive step to avoid crowding
+            int stepHours = pxPerHour >= 24 ? 1 : pxPerHour >= 16 ? 2 : pxPerHour >= 12 ? 3 : 4;
+            var startHour = new DateTime(windowStart.Year, windowStart.Month, windowStart.Day, windowStart.Hour / stepHours * stepHours, 0, 0);
+            var end = windowStart + windowDuration;
+            for (var h = startHour; h <= end; h = h.AddHours(stepHours))
+            {
+                var x = XFromTime(h);
+                list.Add(new Tick(x, h.ToString("HH:00")));
+            }
+        }
+        return list;
+    }
+
+    // Toolbar navigation
+    private void Today() { var center = DateTime.Today.AddHours(12); CenterOn(center); }
+    private void Prev() { PanBy(windowDuration * -0.5); }
+    private void Next() { PanBy(windowDuration * 0.5); }
+
+    private void PanBy(TimeSpan delta)
+    {
+        windowStart = windowStart + delta;
+        StateHasChanged();
+    }
+
+    private void ZoomIn() => ZoomBy(1.2, lastMouseContentX);
+    private void ZoomOut() => ZoomBy(1.0 / 1.2, lastMouseContentX);
+
+    private void ZoomBy(double factor, double anchorContentX)
+    {
+        // Anchor zoom at the mouse content X (no JS interop needed)
+        var newPxPerHour = Math.Clamp(pxPerHour * factor, 1.0, 64.0); // ~min day view to fine hour view
+        if (Math.Abs(newPxPerHour - pxPerHour) < 0.001) return;
+        // Find time currently under the mouse
+        var timeUnderMouse = windowStart + TimeSpan.FromHours(anchorContentX / pxPerHour);
+        // Update scale
+        pxPerHour = newPxPerHour;
+        // Adjust windowStart so that the same time stays under the mouse
+        windowStart = timeUnderMouse - TimeSpan.FromHours(anchorContentX / pxPerHour);
+        StateHasChanged();
+    }
+
+    private void CenterOn(DateTime time)
+    {
+        var half = TimeSpan.FromHours(windowDuration.TotalHours / 2);
+        windowStart = time - half;
+    }
+
+    // Track mouse X relative to content and zoom-to-mouse on wheel
+    double lastMouseContentX = 0;
+    private void OnMouseMove(MouseEventArgs e)
+    {
+        // e.OffsetX is relative to the event target (.sg-timeline), which is our content; it already includes scroll offset
+        lastMouseContentX = e.OffsetX;
+        if (dragging && activeEvent is not null)
+        {
+            OnDragMove(e);
+        }
+    }
+    private void OnMouseUp(MouseEventArgs e)
+    {
+        dragging = false;
+        dragMode = DragMode.None;
+        activeEvent = null;
+    }
+
+    // Wheel zoom anchored to mouse
+    private void OnWheel(WheelEventArgs e)
+    {
+        var factor = e.DeltaY < 0 ? 1.2 : (1.0 / 1.2);
+        ZoomBy(factor, lastMouseContentX);
+    }
+}

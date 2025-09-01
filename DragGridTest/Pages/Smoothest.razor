@@ -1,0 +1,306 @@
+@page "/"
+
+<style>
+    table { border-collapse: collapse; table-layout: fixed; }
+    th, td { border: 1px solid #d0d0d0; padding: 0; box-sizing: border-box; }
+    thead th { background: #f6f8fa; font-weight: 600; font-size: .9rem; }
+    .container { width: 95vw; overflow: auto; }
+
+    .machine-col { white-space: nowrap; padding: 0 .5rem; }
+    .action-col { text-align: center; }
+
+    .slot-head { height: 28px; text-align: center; font-size: .85rem; width: var(--slot-w); }
+
+    .track-cell { padding: 0; }
+    .lane { position: relative; height: 28px; width: calc(var(--day-w) * var(--days)); user-select: none; -webkit-user-drag: none; }
+    .bar { position: absolute; top: 2px; height: 24px; background: #e8f0ff; border: 1px solid #9bbcff; box-sizing: border-box; cursor: grab; }
+    .bar:active { cursor: grabbing; }
+    .bar.preview { outline: 2px dashed #7aa7ff; background: #eef5ff; pointer-events: auto; } /* allow move/up on preview */
+
+    table, th, td { -webkit-user-drag: none; user-select: none; }
+</style>
+
+<InputCheckbox @bind-Value="showHours" /> hours |
+<InputCheckbox @bind-Value="usershowmins" /> mins |
+<input type="time" @bind="WorkingHours.Start" /> start |
+<input type="time" @bind="WorkingHours.End" /> end |
+<InputNumber @onmousewheel="WheelEv" @bind-Value="dayWidth" /> day width
+
+<div class="container">
+    <table draggable="false"
+           @ondragstart:preventDefault
+           style="
+               --day-w:@($"{dayWidth}px");
+               --slots-per-day:@SlotsPerDay;
+               --days:@DaysCount;
+               --machine-w:180px;
+               --action-w:56px;
+               --left-w: calc(var(--machine-w) + var(--action-w));
+               --slot-w: calc(var(--day-w) / var(--slots-per-day));
+               width: calc(var(--left-w) + (var(--day-w) * var(--days)));
+           ">
+        <colgroup>
+            <col class="machine-col" style="width:var(--machine-w)" />
+            <col class="action-col" style="width:var(--action-w)" />
+            @foreach (var _ in Range.Days)
+            {
+                for (int i = 0; i < SlotsPerDay; i++)
+                {
+                    <col style="width:var(--slot-w)" />
+                }
+            }
+        </colgroup>
+
+        <thead>
+        <tr>
+            <th class="machine-col" rowspan="@HeaderRowSpan">Machine</th>
+            <th class="action-col" rowspan="@HeaderRowSpan">Action</th>
+            @foreach (var date in Range.Days)
+            {
+                <th colspan="@SlotsPerDay">@date.Day</th>
+            }
+        </tr>
+
+        @if (showHours)
+        {
+            <tr>
+                @foreach (var _ in Range.Days)
+                {
+                    @foreach (var h in WorkingHours.Hours)
+                    {
+                        <th colspan="4">@h.ToString("HH")</th>
+                    }
+                }
+            </tr>
+
+            @if (showMins)
+            {
+                <tr>
+                    @foreach (var _ in Range.Days)
+                    {
+                        @foreach (var __ in WorkingHours.Hours)
+                        {
+                            <th class="slot-head">00</th>
+                            <th class="slot-head">15</th>
+                            <th class="slot-head">30</th>
+                            <th class="slot-head">45</th>
+                        }
+                    }
+                </tr>
+            }
+        }
+        </thead>
+
+        <tbody>
+        @foreach (var m in machines)
+        {
+            <tr>
+                <td class="machine-col">@m.Name</td>
+                <td class="action-col"><button @onclick="() => OnMachineAction(m)">⋯</button></td>
+
+                <td class="track-cell" colspan="@(DaysCount * SlotsPerDay)">
+                    <div class="lane"
+                         @onpointermove="(e) => LaneMove(e, m)"
+                         @onpointerup="(e) => LaneUp(e, m)">
+                        @foreach (var r in m.Routings)
+                        {
+                            var left = OffsetPx(r.TimeSpan.Start);
+                            var width = WidthPx(r.TimeSpan.Start, r.TimeSpan.End);
+                            if (width > 0)
+                            {
+                                <div class="bar"
+                                     style="left:@($"{left}px"); width:@($"{width}px")"
+                                     @onpointerdown="(e) => BarDown(e, m, r, left, width)"
+                                     @onpointermove="(e) => BarMove(e, m, left)"
+                                     @onpointerup="(e) => LaneUp(e, m)">
+                                </div>
+                            }
+                        }
+
+                        @if (preview is not null && preview.Machine == m)
+                        {
+                            <div class="bar preview"
+                                 style="left:@($"{preview.LeftPx}px"); width:@($"{preview.WidthPx}px")"
+                                 @onpointermove="(e) => PreviewMove(e, m, preview.LeftPx)"
+                                 @onpointerup="(e) => LaneUp(e, m)">
+                            </div>
+                        }
+                    </div>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    int dayWidth = 1000;
+    bool showHours = true;
+    bool usershowmins = true;
+    bool showMins => showHours && usershowmins;
+
+    DateRange Range = new()
+    {
+        Start = new(DateTime.Now.Year, DateTime.Now.Month, 1),
+        End = new(DateTime.Now.Year, DateTime.Now.Month, DateTime.DaysInMonth(DateTime.Now.Year, DateTime.Now.Month))
+    };
+
+    TimeRange WorkingHours = new() { Start = new TimeOnly(8, 0), End = new TimeOnly(17, 0) };
+
+    List<Machine> machines = [new("Lathe"), new("Mill"), new("Sander")];
+
+    int HeaderRowSpan => 1 + (showHours ? 1 : 0) + (showHours && showMins ? 1 : 0);
+    int SlotsPerDay => WorkingHours.HourSlots * 4;
+    int DaysCount => (int)(Range.End.Date - Range.Start.Date).TotalDays + 1;
+
+    void OnMachineAction(Machine m) { }
+
+    class Routing
+    {
+        public Guid Id = Guid.NewGuid();
+        public int Sequence;
+        public DateRange TimeSpan = new();
+    }
+
+    class BomItem { }
+    class WorksOrder
+    {
+        string Name { set; get; }
+        List<Routing> operations = [];
+        List<BomItem> Bom = [];
+    }
+
+    class DateRange
+    {
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+        public IEnumerable<DateTime> Days { get { for (var d = Start.Date; d <= End.Date; d = d.AddDays(1)) yield return d; } }
+        public bool Contains(DateTime t) => t >= Start && t < End;
+    }
+
+    class TimeRange
+    {
+        public TimeOnly Start;
+        public TimeOnly End;
+        public int HourSlots => End <= Start ? 0 : (int)Math.Floor((End - Start).TotalHours);
+        public IEnumerable<TimeOnly> Hours
+        {
+            get
+            {
+                var h = new TimeOnly(Start.Hour, 0);
+                for (int i = 0; i < HourSlots; i++) yield return h.AddHours(i);
+            }
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        var d = DateTime.Today.AddDays(1);
+        machines.First().Routings =
+        [
+            new Routing
+            {
+                Sequence = 1,
+                TimeSpan = new DateRange { Start = d.AddHours(9).AddMinutes(15), End = d.AddHours(12).AddMinutes(45) }
+            }
+        ];
+    }
+
+    class Machine
+    {
+        public Machine(string name) { Name = name; }
+        public string Name { get; }
+        public List<Routing> Routings = [];
+    }
+
+    double MinutesPerDay => (WorkingHours.End - WorkingHours.Start).TotalMinutes;
+    double PxPerMinute => dayWidth / Math.Max(1.0, MinutesPerDay);
+    double LaneWidthPx => dayWidth * DaysCount;
+
+    DateTime DayWorkingStart(DateTime d) => d.Date.AddHours(WorkingHours.Start.Hour).AddMinutes(WorkingHours.Start.Minute);
+
+    double MinutesSinceRangeStart(DateTime t)
+    {
+        var dayOffset = (t.Date - Range.Start.Date).TotalDays;
+        var inDay = (t - DayWorkingStart(t)).TotalMinutes;
+        var inDayClamped = Math.Clamp(inDay, 0, MinutesPerDay);
+        return dayOffset * MinutesPerDay + inDayClamped;
+    }
+
+    double OffsetPx(DateTime t) => Math.Clamp(MinutesSinceRangeStart(t) * PxPerMinute, 0, LaneWidthPx);
+
+    double WidthPx(DateTime s, DateTime e)
+    {
+        var left = MinutesSinceRangeStart(s) * PxPerMinute;
+        var right = MinutesSinceRangeStart(e) * PxPerMinute;
+        var w = right - left;
+        return w <= 0 ? 0 : Math.Min(w, LaneWidthPx - Math.Clamp(left, 0, LaneWidthPx));
+    }
+
+    DateTime TimeFromPx(double x)
+    {
+        var mins = Math.Clamp(x, 0, LaneWidthPx) / PxPerMinute;
+        var day = Math.Floor(mins / MinutesPerDay);
+        var inDay = mins - day * MinutesPerDay;
+        var baseDay = Range.Start.Date.AddDays(day);
+        return DayWorkingStart(baseDay).AddMinutes(inDay);
+    }
+
+    record PreviewState(Machine Machine, double LeftPx, double WidthPx);
+    record DragState(Machine Origin, Routing Routing, double GrabOffsetPx, double WidthPx, double OriginLeftPx);
+
+    PreviewState? preview;
+    DragState? drag;
+
+    void BarDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx)
+    {
+        var grab = e.OffsetX; // relative to bar
+        drag = new(m, r, grab, widthPx, leftPx);
+        preview = new(m, leftPx, widthPx);
+        StateHasChanged();
+    }
+
+    void MoveAt(double laneX, Machine m)
+    {
+        if (drag is null) return;
+        var newLeft = Math.Clamp(laneX - drag.GrabOffsetPx, 0, LaneWidthPx - drag.WidthPx);
+        preview = new(m, newLeft, drag.WidthPx);
+        StateHasChanged();
+    }
+
+    // When moving over the lane, OffsetX is lane-relative.
+    void LaneMove(PointerEventArgs e, Machine m) => MoveAt(e.OffsetX, m);
+
+    // When moving over the original bar, OffsetX is bar-relative -> convert to lane X using the bar's original left.
+    void BarMove(PointerEventArgs e, Machine m, double barLeftPx) => MoveAt(barLeftPx + e.OffsetX, m);
+
+    // When moving over the preview bar, OffsetX is preview-relative -> convert similarly.
+    void PreviewMove(PointerEventArgs e, Machine m, double previewLeftPx) => MoveAt(previewLeftPx + e.OffsetX, m);
+
+    void LaneUp(PointerEventArgs e, Machine m)
+    {
+        if (drag is null || preview is null) { drag = null; preview = null; return; }
+
+        var newStart = TimeFromPx(preview.LeftPx);
+        var newEnd   = TimeFromPx(preview.LeftPx + preview.WidthPx);
+
+        if (m != drag.Origin)
+        {
+            drag.Origin.Routings.Remove(drag.Routing);
+            m.Routings.Add(drag.Routing);
+        }
+
+        drag.Routing.TimeSpan.Start = newStart;
+        drag.Routing.TimeSpan.End   = newEnd;
+
+        drag = null;
+        preview = null;
+        StateHasChanged();
+    }
+
+    private void WheelEv(WheelEventArgs ev)
+    {
+        int v = ev.AltKey ? 100 : 10;
+        dayWidth = Math.Clamp(dayWidth + (ev.DeltaY > 0 ? v : -v), 200, 4000);
+    }
+}
