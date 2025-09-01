@@ -8,14 +8,14 @@
 
     .machine-col { white-space: nowrap; padding: 0 .5rem; }
     .action-col { text-align: center; }
-
     .slot-head { height: 28px; text-align: center; font-size: .85rem; width: var(--slot-w); }
 
     .track-cell { padding: 0; }
-    .lane { position: relative; height: 28px; width: calc(var(--day-w) * var(--days)); user-select: none; -webkit-user-drag: none; }
+    .lane { position: relative; height: 28px; width: calc(var(--day-w) * var(--days)); user-select: none; -webkit-user-drag: none; touch-action: none; }
     .bar { position: absolute; top: 2px; height: 24px; background: #e8f0ff; border: 1px solid #9bbcff; box-sizing: border-box; cursor: grab; }
     .bar:active { cursor: grabbing; }
-    .bar.preview { outline: 2px dashed #7aa7ff; background: #eef5ff; pointer-events: auto; } /* allow move/up on preview */
+    .bar.preview { outline: 2px dashed #7aa7ff; background: #eef5ff; pointer-events: none; }
+    .bar.dragging { pointer-events: none; visibility: hidden; }
 
     table, th, td { -webkit-user-drag: none; user-select: none; }
 </style>
@@ -24,7 +24,8 @@
 <InputCheckbox @bind-Value="usershowmins" /> mins |
 <input type="time" @bind="WorkingHours.Start" /> start |
 <input type="time" @bind="WorkingHours.End" /> end |
-<InputNumber @onmousewheel="WheelEv" @bind-Value="dayWidth" /> day width
+<InputNumber @onmousewheel="WheelEv" @bind-Value="dayWidth" /> day width |
+<InputNumber @bind-Value="snapToMins" min="1" step="1" /> snap (mins)
 
 <div class="container">
     <table draggable="false"
@@ -108,22 +109,16 @@
                             var width = WidthPx(r.TimeSpan.Start, r.TimeSpan.End);
                             if (width > 0)
                             {
-                                <div class="bar"
+                                <div class="bar @(drag?.Routing == r ? "dragging" : "")"
                                      style="left:@($"{left}px"); width:@($"{width}px")"
-                                     @onpointerdown="(e) => BarDown(e, m, r, left, width)"
-                                     @onpointermove="(e) => BarMove(e, m, left)"
-                                     @onpointerup="(e) => LaneUp(e, m)">
+                                     @onpointerdown="(e) => BarDown(e, m, r, left, width)">
                                 </div>
                             }
                         }
 
                         @if (preview is not null && preview.Machine == m)
                         {
-                            <div class="bar preview"
-                                 style="left:@($"{preview.LeftPx}px"); width:@($"{preview.WidthPx}px")"
-                                 @onpointermove="(e) => PreviewMove(e, m, preview.LeftPx)"
-                                 @onpointerup="(e) => LaneUp(e, m)">
-                            </div>
+                            <div class="bar preview" style="left:@($"{preview.LeftPx}px"); width:@($"{preview.WidthPx}px")"></div>
                         }
                     </div>
                 </td>
@@ -135,6 +130,8 @@
 
 @code {
     int dayWidth = 1000;
+    int snapToMins = 5;
+
     bool showHours = true;
     bool usershowmins = true;
     bool showMins => showHours && usershowmins;
@@ -155,20 +152,9 @@
 
     void OnMachineAction(Machine m) { }
 
-    class Routing
-    {
-        public Guid Id = Guid.NewGuid();
-        public int Sequence;
-        public DateRange TimeSpan = new();
-    }
-
+    class Routing { public Guid Id = Guid.NewGuid(); public int Sequence; public DateRange TimeSpan = new(); }
     class BomItem { }
-    class WorksOrder
-    {
-        string Name { set; get; }
-        List<Routing> operations = [];
-        List<BomItem> Bom = [];
-    }
+    class WorksOrder { string Name { set; get; } List<Routing> operations = []; List<BomItem> Bom = []; }
 
     class DateRange
     {
@@ -206,12 +192,7 @@
         ];
     }
 
-    class Machine
-    {
-        public Machine(string name) { Name = name; }
-        public string Name { get; }
-        public List<Routing> Routings = [];
-    }
+    class Machine { public Machine(string name) { Name = name; } public string Name { get; } public List<Routing> Routings = []; }
 
     double MinutesPerDay => (WorkingHours.End - WorkingHours.Start).TotalMinutes;
     double PxPerMinute => dayWidth / Math.Max(1.0, MinutesPerDay);
@@ -246,8 +227,16 @@
         return DayWorkingStart(baseDay).AddMinutes(inDay);
     }
 
+    double SnapLeftPx(double leftPx, double widthPx)
+    {
+        var snap = Math.Max(1, snapToMins);
+        var snapPx = PxPerMinute * snap;
+        var snapped = Math.Round(leftPx / snapPx) * snapPx;
+        return Math.Clamp(snapped, 0, LaneWidthPx - widthPx);
+    }
+
     record PreviewState(Machine Machine, double LeftPx, double WidthPx);
-    record DragState(Machine Origin, Routing Routing, double GrabOffsetPx, double WidthPx, double OriginLeftPx);
+    record DragState(Machine Origin, Routing Routing, double GrabOffsetPx, double WidthPx);
 
     PreviewState? preview;
     DragState? drag;
@@ -255,34 +244,27 @@
     void BarDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx)
     {
         var grab = e.OffsetX; // relative to bar
-        drag = new(m, r, grab, widthPx, leftPx);
+        drag = new(m, r, grab, widthPx);
         preview = new(m, leftPx, widthPx);
         StateHasChanged();
     }
 
-    void MoveAt(double laneX, Machine m)
+    void LaneMove(PointerEventArgs e, Machine m)
     {
         if (drag is null) return;
-        var newLeft = Math.Clamp(laneX - drag.GrabOffsetPx, 0, LaneWidthPx - drag.WidthPx);
+        var proposedLeft = e.OffsetX - drag.GrabOffsetPx;
+        var newLeft = SnapLeftPx(proposedLeft, drag.WidthPx);
         preview = new(m, newLeft, drag.WidthPx);
         StateHasChanged();
     }
-
-    // When moving over the lane, OffsetX is lane-relative.
-    void LaneMove(PointerEventArgs e, Machine m) => MoveAt(e.OffsetX, m);
-
-    // When moving over the original bar, OffsetX is bar-relative -> convert to lane X using the bar's original left.
-    void BarMove(PointerEventArgs e, Machine m, double barLeftPx) => MoveAt(barLeftPx + e.OffsetX, m);
-
-    // When moving over the preview bar, OffsetX is preview-relative -> convert similarly.
-    void PreviewMove(PointerEventArgs e, Machine m, double previewLeftPx) => MoveAt(previewLeftPx + e.OffsetX, m);
 
     void LaneUp(PointerEventArgs e, Machine m)
     {
         if (drag is null || preview is null) { drag = null; preview = null; return; }
 
-        var newStart = TimeFromPx(preview.LeftPx);
-        var newEnd   = TimeFromPx(preview.LeftPx + preview.WidthPx);
+        var startSnapped = SnapLeftPx(preview.LeftPx, preview.WidthPx);
+        var newStart = TimeFromPx(startSnapped);
+        var newEnd = TimeFromPx(startSnapped + preview.WidthPx);
 
         if (m != drag.Origin)
         {
@@ -291,7 +273,7 @@
         }
 
         drag.Routing.TimeSpan.Start = newStart;
-        drag.Routing.TimeSpan.End   = newEnd;
+        drag.Routing.TimeSpan.End = newEnd;
 
         drag = null;
         preview = null;

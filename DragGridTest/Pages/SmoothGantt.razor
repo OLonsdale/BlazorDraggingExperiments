@@ -1,25 +1,114 @@
-@page "/smooth-gantt"
+@page "/smooth"
 @using System.Globalization
 
 <PageTitle>Smooth Gantt</PageTitle>
 
 <style>
-    .sg-toolbar { margin-bottom:8px; display:flex; gap:8px; align-items:center; }
-    .sg-legend { margin-left:auto; opacity:0.7; font-size:12px; }
-    .sg-wrap { border:1px solid #aaa; overflow-x:auto; overflow-y:hidden; }
-    .sg-header { position:relative; height:28px; border-bottom:1px solid #aaa; font-size:12px; }
-    .sg-body { display:grid; grid-template-columns: 180px 1fr; height:420px; }
-    .sg-machines { border-right:1px solid #aaa; }
-    .sg-row { height:36px; display:flex; align-items:center; padding:0 8px; border-bottom:1px solid #ddd; white-space:nowrap; }
-    .sg-timeline { position:relative; }
-    .sg-track { position:relative; height:36px; border-bottom:1px solid #ddd; }
-    .sg-tick { position:absolute; top:0; bottom:0; width:1px; background:#bbb; }
-    .sg-tick-label { position:absolute; top:0; font-size:11px; padding:2px 4px; background:rgba(255,255,255,0.75); white-space:nowrap; }
-    .sg-bar { position:absolute; height:24px; top:6px; border-radius:3px; overflow:hidden; cursor:grab; }
-    .sg-bar-inner { height:100%; opacity:0.9; position:relative; }
-    .sg-handle { position:absolute; top:0; bottom:0; width:10px; cursor:ew-resize; opacity:0.8; }
-    .sg-handle.left { left:0; border-left:3px solid rgba(0,0,0,0.35); }
-    .sg-handle.right { right:0; border-right:3px solid rgba(0,0,0,0.35); }
+    .sg-toolbar {
+        margin-bottom: 8px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .sg-legend {
+        margin-left: auto;
+        opacity: 0.7;
+        font-size: 12px;
+    }
+
+    .sg-wrap {
+        border: 1px solid #aaa;
+        overflow-x: auto;
+        overflow-y: hidden;
+    }
+
+    .sg-header {
+        position: relative;
+        height: 28px;
+        border-bottom: 1px solid #aaa;
+        font-size: 12px;
+    }
+
+    .sg-body {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        height: 420px;
+    }
+
+    .sg-machines {
+        border-right: 1px solid #aaa;
+    }
+
+    .sg-row {
+        height: 36px;
+        display: flex;
+        align-items: center;
+        padding: 0 8px;
+        border-bottom: 1px solid #ddd;
+        white-space: nowrap;
+    }
+
+    .sg-timeline {
+        position: relative;
+    }
+
+    .sg-track {
+        position: relative;
+        height: 36px;
+        border-bottom: 1px solid #ddd;
+    }
+
+    .sg-tick {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: #bbb;
+    }
+
+    .sg-tick-label {
+        position: absolute;
+        top: 0;
+        font-size: 11px;
+        padding: 2px 4px;
+        background: rgba(255, 255, 255, 0.75);
+        white-space: nowrap;
+    }
+
+    .sg-bar {
+        position: absolute;
+        height: 24px;
+        top: 6px;
+        border-radius: 3px;
+        overflow: hidden;
+        cursor: grab;
+    }
+
+    .sg-bar-inner {
+        height: 100%;
+        opacity: 0.9;
+        position: relative;
+    }
+
+    .sg-handle {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 10px;
+        cursor: ew-resize;
+        opacity: 0.8;
+    }
+
+    .sg-handle.left {
+        left: 0;
+        border-left: 3px solid rgba(0, 0, 0, 0.35);
+    }
+
+    .sg-handle.right {
+        right: 0;
+        border-right: 3px solid rgba(0, 0, 0, 0.35);
+    }
 </style>
 
 <div class="sg-toolbar">
@@ -63,9 +152,11 @@
                                  @onmousedown:preventDefault @onmousedown="(e) => OnBarBodyMouseDown(e, ev)">
                                 @ev.Title
                                 <div class="sg-handle left" style="background-color:@ev.Color"
-                                     @onmousedown:preventDefault @onmousedown="(e) => OnBarStartHandleMouseDown(e, ev)"></div>
+                                     @onmousedown:preventDefault
+                                     @onmousedown="(e) => OnBarStartHandleMouseDown(e, ev)"></div>
                                 <div class="sg-handle right" style="background-color:@ev.Color"
-                                     @onmousedown:preventDefault @onmousedown="(e) => OnBarEndHandleMouseDown(e, ev)"></div>
+                                     @onmousedown:preventDefault
+                                     @onmousedown="(e) => OnBarEndHandleMouseDown(e, ev)"></div>
                             </div>
                         </div>
                     }
@@ -76,9 +167,23 @@
 </div>
 
 @code {
+
     // Data
-    public class Machine { public Guid Id { get; set; } = Guid.NewGuid(); public string Name { get; set; } = string.Empty; }
-    public class MachineEvent { public Guid Id { get; set; } = Guid.NewGuid(); public Guid MachineId { get; set; } public DateTime Start { get; set; } public DateTime End { get; set; } public string Title { get; set; } = string.Empty; public string Color { get; set; } = "#64B5F6"; }
+    public class Machine
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public string Name { get; set; } = string.Empty;
+    }
+
+    public class MachineEvent
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public Guid MachineId { get; set; }
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Color { get; set; } = "#64B5F6";
+    }
 
     List<Machine> machines = new()
     {
@@ -86,6 +191,7 @@
         new() { Name = "Mill-02" },
         new() { Name = "Cutter-03" }
     };
+
     List<MachineEvent> events = new();
 
     protected override void OnInitialized()
@@ -113,7 +219,14 @@
     private double Px(double x) => Math.Round(x, 2);
 
     // Dragging state
-    enum DragMode { None, Move, ResizeStart, ResizeEnd }
+    enum DragMode
+    {
+        None,
+        Move,
+        ResizeStart,
+        ResizeEnd
+    }
+
     bool dragging = false;
     DragMode dragMode = DragMode.None;
     MachineEvent? activeEvent = null;
@@ -183,11 +296,13 @@
                 break;
             }
         }
+
         StateHasChanged();
     }
 
     // Ticks (adaptive: days or hours based on pxPerHour)
     private record Tick(double X, string Label);
+
     private IEnumerable<Tick> ComputeTicks()
     {
         var list = new List<Tick>();
@@ -214,13 +329,26 @@
                 list.Add(new Tick(x, h.ToString("HH:00")));
             }
         }
+
         return list;
     }
 
     // Toolbar navigation
-    private void Today() { var center = DateTime.Today.AddHours(12); CenterOn(center); }
-    private void Prev() { PanBy(windowDuration * -0.5); }
-    private void Next() { PanBy(windowDuration * 0.5); }
+    private void Today()
+    {
+        var center = DateTime.Today.AddHours(12);
+        CenterOn(center);
+    }
+
+    private void Prev()
+    {
+        PanBy(windowDuration * -0.5);
+    }
+
+    private void Next()
+    {
+        PanBy(windowDuration * 0.5);
+    }
 
     private void PanBy(TimeSpan delta)
     {
@@ -253,6 +381,7 @@
 
     // Track mouse X relative to content and zoom-to-mouse on wheel
     double lastMouseContentX = 0;
+
     private void OnMouseMove(MouseEventArgs e)
     {
         // e.OffsetX is relative to the event target (.sg-timeline), which is our content; it already includes scroll offset
@@ -262,6 +391,7 @@
             OnDragMove(e);
         }
     }
+
     private void OnMouseUp(MouseEventArgs e)
     {
         dragging = false;
@@ -275,4 +405,5 @@
         var factor = e.DeltaY < 0 ? 1.2 : (1.0 / 1.2);
         ZoomBy(factor, lastMouseContentX);
     }
+
 }

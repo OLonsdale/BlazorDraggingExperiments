@@ -1,5 +1,356 @@
-<h3>Cal</h3>
+@page "/cal"
+@using System.Globalization
+@using System.Linq
 
-@code {
-    
+<PageTitle>Calendar</PageTitle>
+
+<style>
+    table { border-collapse: collapse; }
+    th, td{
+        outline: 1px solid black;
+        width: 110px;
+        height: 70px;
+        vertical-align: top;
+    }
+    .toolbar { margin-bottom:8px; display:flex; gap:8px; align-items:center; }
+    .event{
+        user-select: none;
+        cursor: grab;
+        width: 100%;
+        height: 100%;
+    }
+    .eventStart{
+        user-select: none;
+        cursor: grab;
+        width: 100%;
+        height: 100%;
+        text-align: center;
+    }
+    .eventEnd{
+        user-select: none;
+        cursor: grab;  
+        width: 100%;
+        height: 100%;
+        text-align: center;
+    }
+    .cellHeader { font-size:10px; opacity:0.7; padding:2px; }
+</style>
+
+<div class="toolbar">
+    <button @onclick="() => SetView(CalendarView.Month)">Month</button>
+    <button @onclick="() => SetView(CalendarView.Week)">Week</button>
+    <button @onclick="() => SetView(CalendarView.Day)">Day</button>
+    <span style="margin-left:12px; font-weight:bold;">@ViewTitle</span>
+    <button style="margin-left:auto" @onclick="Prev">Prev</button>
+    <button @onclick="Today">Today</button>
+    <button @onclick="Next">Next</button>
+    <button @onclick="AddNewEvent">New Event</button>
+</div>
+
+<table>
+    @if (view == CalendarView.Month || view == CalendarView.Week)
+    {
+        <thead>
+            <tr>
+                @for (int c = 0; c < Cols; c++)
+                {
+                    <th>@HeaderForColumn(c)</th>
+                }
+            </tr>
+        </thead>
+    }
+    <tbody>
+    @for (int x = 0; x < Rows; x++)
+    {
+        <tr>
+        @for (int y = 0; y < Cols; y++)
+        {
+            int localx = x;
+            int localy = y;
+            int idx = localx * Cols + localy;
+            var cellEvents = events
+                .Select(ev => new { ev, Start = GetEventStartIndex(ev), End = GetEventEndIndex(ev) })
+                .Where(t => idx >= t.Start && idx <= t.End)
+                .ToList();
+            <td @onmouseup="(e) => dropped(e, localx, localy)">
+                <div class="cellHeader">@CellHeader(localx, localy)</div>
+                @if (cellEvents.Count > 0)
+                {
+                    <div style="display:flex; flex-direction:column; width:100%; height:calc(100% - 14px)">
+                        @for (int i = 0; i < cellEvents.Count; i++)
+                        {
+                            var t = cellEvents[i];
+                            var ev = t.ev;
+                            var sIdx = t.Start; var eIdx = t.End;
+                            var h = 100.0 / cellEvents.Count;
+                            <div style="width:100%; height:@h%">
+                                @if (sIdx == eIdx && idx == sIdx)
+                                {
+                                    <div style="display:flex; width:100%; height:100%">
+                                        <div @onmousedown:preventDefault @onmousedown="(e) => OnStartMouseDown(e, localx, localy, ev)" @oncontextmenu:preventDefault @oncontextmenu="(e) => OnEventContextMenu(e, ev)" class="eventStart" draggable="false" style="width:20%; height:100%; background-color:@ev.Color">[</div>
+                                        <div @onmousedown:preventDefault @onmousedown="(e) => OnBodyMouseDown(e, localx, localy, ev)" @oncontextmenu:preventDefault @oncontextmenu="(e) => OnEventContextMenu(e, ev)" class="event" draggable="false" style="width:60%; height:100%; background-color:@ev.Color"></div>
+                                        <div @onmousedown:preventDefault @onmousedown="(e) => OnEndMouseDown(e, localx, localy, ev)" @oncontextmenu:preventDefault @oncontextmenu="(e) => OnEventContextMenu(e, ev)" class="eventEnd" draggable="false" style="width:20%; height:100%; background-color:@ev.Color">]</div>
+                                    </div>
+                                }
+                                else if (idx == sIdx)
+                                {
+                                    <div @onmousedown:preventDefault @onmousedown="(e) => OnStartMouseDown(e, localx, localy, ev)" @oncontextmenu:preventDefault @oncontextmenu="(e) => OnEventContextMenu(e, ev)" class="eventStart" draggable="false" style="background-color:@ev.Color">[</div>
+                                }
+                                else if (idx == eIdx)
+                                {
+                                    <div @onmousedown:preventDefault @onmousedown="(e) => OnEndMouseDown(e, localx, localy, ev)" @oncontextmenu:preventDefault @oncontextmenu="(e) => OnEventContextMenu(e, ev)" class="eventEnd" draggable="false" style="background-color:@ev.Color">]</div>
+                                }
+                                else
+                                {
+                                    <div @onmousedown:preventDefault @onmousedown="(e) => OnBodyMouseDown(e, localx, localy, ev)" @oncontextmenu:preventDefault @oncontextmenu="(e) => OnEventContextMenu(e, ev)" class="event" draggable="false" style="background-color:@ev.Color"></div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </td>
+        }
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code{
+    enum CalendarView { Month, Week, Day }
+
+    public class CalendarEvent
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+        public string Color { get; set; } = "#64B5F6"; // default color
+    }
+
+    CalendarView view = CalendarView.Month;
+    DateTime currentDate = DateTime.Today;
+
+    // Dynamic dimensions per view
+    int Rows => view == CalendarView.Month ? 6 : 24;
+    int Cols => view == CalendarView.Day ? 1 : 7;
+    int TotalCells => Rows * Cols;
+
+    List<CalendarEvent> events = new List<CalendarEvent>
+    {
+        new CalendarEvent { Start = DateTime.Today.AddDays(2).AddHours(9), End = DateTime.Today.AddDays(2).AddHours(11), Color = "#81C784" }
+    };
+
+    // Drag state
+    enum DragMode { None, Move, ResizeStart, ResizeEnd }
+    bool dragging = false;
+    DragMode dragMode = DragMode.None;
+    int dragOffsetCells = 0; // how far into the event the drag started (in slots from start)
+    CalendarEvent? activeEvent = null;
+
+    // View helpers
+    private DayOfWeek FirstDayOfWeek => CultureInfo.CurrentCulture.DateTimeFormat.FirstDayOfWeek;
+    private DateTime MonthGridStart(DateTime d)
+    {
+        var firstOfMonth = new DateTime(d.Year, d.Month, 1);
+        int diff = ((int)firstOfMonth.DayOfWeek - (int)FirstDayOfWeek + 7) % 7;
+        return firstOfMonth.AddDays(-diff).Date;
+    }
+    private DateTime WeekStart(DateTime d)
+    {
+        int diff = ((int)d.DayOfWeek - (int)FirstDayOfWeek + 7) % 7;
+        return d.Date.AddDays(-diff);
+    }
+    private DateTime ViewStart()
+    {
+        return view switch
+        {
+            CalendarView.Month => MonthGridStart(currentDate),
+            CalendarView.Week => WeekStart(currentDate),
+            CalendarView.Day => currentDate.Date,
+            _ => currentDate.Date
+        };
+    }
+    private TimeSpan SlotSize() => view == CalendarView.Month ? TimeSpan.FromDays(1) : TimeSpan.FromHours(1);
+
+    private int GetEventStartIndex(CalendarEvent ev)
+    {
+        var start = ViewStart();
+        var span = ev.Start - start;
+        double units = (view == CalendarView.Month) ? span.TotalDays : span.TotalHours;
+        return (int)Math.Floor(units);
+    }
+    private int GetEventEndIndex(CalendarEvent ev)
+    {
+        var start = ViewStart();
+        var span = ev.End - start;
+        double units = (view == CalendarView.Month) ? span.TotalDays : span.TotalHours;
+        return (int)Math.Floor(units);
+    }
+
+    private string ViewTitle => view switch
+    {
+        CalendarView.Month => currentDate.ToString("Y"),
+        CalendarView.Week => $"Week of {WeekStart(currentDate):d}",
+        CalendarView.Day => currentDate.ToString("D"),
+        _ => string.Empty
+    };
+
+    private string HeaderForColumn(int c)
+    {
+        if (view == CalendarView.Month || view == CalendarView.Week)
+        {
+            var d = ViewStart().AddDays(c);
+            return d.ToString("ddd");
+        }
+        return string.Empty;
+    }
+
+    private string CellHeader(int row, int col)
+    {
+        if (view == CalendarView.Month)
+        {
+            var date = ViewStart().AddDays(row * Cols + col);
+            return date.Day.ToString();
+        }
+        else if (view == CalendarView.Week)
+        {
+            return $"{row:00}:00";
+        }
+        else // Day
+        {
+            return $"{row:00}:00";
+        }
+    }
+
+    private void SetView(CalendarView v)
+    {
+        view = v;
+        StateHasChanged();
+    }
+    private void Today()
+    {
+        currentDate = DateTime.Today;
+        StateHasChanged();
+    }
+    private void Prev()
+    {
+        currentDate = view switch
+        {
+            CalendarView.Month => currentDate.AddMonths(-1),
+            CalendarView.Week => currentDate.AddDays(-7),
+            CalendarView.Day => currentDate.AddDays(-1),
+            _ => currentDate
+        };
+        StateHasChanged();
+    }
+    private void Next()
+    {
+        currentDate = view switch
+        {
+            CalendarView.Month => currentDate.AddMonths(1),
+            CalendarView.Week => currentDate.AddDays(7),
+            CalendarView.Day => currentDate.AddDays(1),
+            _ => currentDate
+        };
+        StateHasChanged();
+    }
+
+    private void dropped(MouseEventArgs obj, int x, int y)
+    {
+        if (!dragging || activeEvent is null)
+            return;
+
+        int dropIndex = x * Cols + y;
+        int evStartIdx = GetEventStartIndex(activeEvent);
+        int evEndIdx = GetEventEndIndex(activeEvent);
+        int length = evEndIdx - evStartIdx; // inclusive span in slots
+
+        var viewStart = ViewStart();
+        var slot = SlotSize();
+
+        switch (dragMode)
+        {
+            case DragMode.Move:
+                {
+                    int newStartIndex = dropIndex - dragOffsetCells;
+                    DateTime newStart = viewStart + slot * newStartIndex;
+                    DateTime newEnd = newStart + slot * length;
+                    activeEvent.Start = newStart;
+                    activeEvent.End = newEnd;
+                    break;
+                }
+            case DragMode.ResizeStart:
+                {
+                    int newStartIndex = Math.Min(dropIndex, evEndIdx);
+                    activeEvent.Start = viewStart + slot * newStartIndex;
+                    break;
+                }
+            case DragMode.ResizeEnd:
+                {
+                    int newEndIndex = Math.Max(dropIndex, evStartIdx);
+                    activeEvent.End = viewStart + slot * newEndIndex;
+                    break;
+                }
+        }
+
+        dragging = false;
+        dragMode = DragMode.None;
+        activeEvent = null;
+        StateHasChanged();
+    }
+
+    private void OnBodyMouseDown(MouseEventArgs obj, int x, int y, CalendarEvent ev)
+    {
+        if (obj.Button != 0) return; // Only left button starts drag
+        int idx = x * Cols + y;
+        int sIdx = GetEventStartIndex(ev);
+        dragging = true;
+        dragMode = DragMode.Move;
+        dragOffsetCells = idx - sIdx;
+        activeEvent = ev;
+    }
+
+    private void OnStartMouseDown(MouseEventArgs obj, int x, int y, CalendarEvent ev)
+    {
+        if (obj.Button != 0) return; // Only left button starts drag
+        dragging = true;
+        dragMode = DragMode.ResizeStart;
+        activeEvent = ev;
+    }
+
+    private void OnEndMouseDown(MouseEventArgs obj, int x, int y, CalendarEvent ev)
+    {
+        if (obj.Button != 0) return; // Only left button starts drag
+        dragging = true;
+        dragMode = DragMode.ResizeEnd;
+        activeEvent = ev;
+    }
+
+    private void OnEventContextMenu(MouseEventArgs obj, CalendarEvent ev)
+    {
+        events.Remove(ev);
+        StateHasChanged();
+    }
+
+    private static readonly string[] Palette = new[]
+    {
+        "#E57373", "#64B5F6", "#81C784", "#FFD54F", "#BA68C8", "#4DB6AC", "#FF8A65", "#A1887F", "#90A4AE", "#F06292", "#7986CB"
+    };
+    private readonly Random _rng = new Random();
+    private string RandomColor() => Palette[_rng.Next(Palette.Length)];
+
+    private void AddNewEvent()
+    {
+        var vs = ViewStart();
+        if (view == CalendarView.Month)
+        {
+            var start = currentDate.Date;
+            events.Add(new CalendarEvent { Start = start, End = start, Color = RandomColor() });
+        }
+        else
+        {
+            var start = (view == CalendarView.Week) ? WeekStart(currentDate).AddHours(9) : currentDate.Date.AddHours(9);
+            events.Add(new CalendarEvent { Start = start, End = start.AddHours(1), Color = RandomColor() });
+        }
+        StateHasChanged();
+    }
 }

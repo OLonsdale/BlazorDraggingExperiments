@@ -1,5 +1,231 @@
-<h3>JsInterop</h3>
+@page "/jsinterop"
+@using System.Linq
+@using Microsoft.AspNetCore.Components
+@using Microsoft.JSInterop
 
-@code {
-    
+<PageTitle>Home</PageTitle>
+
+<style>
+    td {
+        outline: 1px solid black;
+        width: 50px;
+        height: 50px;
+    }
+
+    .event,
+    .eventStart,
+    .eventEnd {
+        user-select: none;
+        cursor: grab;
+        width: 100%;
+        height: 100%;
+    }
+
+    .eventStart, .eventEnd {
+        text-align: center;
+    }
+</style>
+
+<div style="margin-bottom:8px; display:flex; gap:8px; align-items:center;">
+    <label>Rows: <input type="number" min="1" @bind="Rows"/></label>
+    <label>Cols: <input type="number" min="1" @bind="Cols"/></label>
+    <button @onclick="AddNewEvent">New Event</button>
+</div>
+
+<table @onmousedown="OnTableMouseDown" @onmouseup="OnTableMouseUp" @oncontextmenu:preventDefault>
+    @for (int x = 0; x < Rows; x++)
+    {
+        <tr>
+            @for (int y = 0; y < Cols; y++)
+            {
+                int localx = x;
+                int localy = y;
+                int idx = GetIndex(localx, localy);
+                var cellEvents = EventsInCell(idx).ToList();
+                <td id="@CellId(idx)">
+                    @if (cellEvents.Count > 0)
+                    {
+                        <div style="display:flex; flex-direction:column; width:100%; height:100%">
+                            @for (int i = 0; i < cellEvents.Count; i++)
+                            {
+                                var ev = cellEvents[i];
+                                var h = HeightPercent(cellEvents.Count);
+                                <div class="slice" style="width:100%; height:@h">
+                                    @if (IsSingle(ev) && idx == ev.StartIndex)
+                                    {
+                                        <div style="display:flex; width:100%; height:100%">
+                                            <div class="eventStart" draggable="false" style="@SingleSegStyle(ev, 20)" id="@SegIdStart(ev, idx)">[</div>
+                                            <div class="event" draggable="false" style="@SingleSegStyle(ev, 60)" id="@SegIdBody(ev, idx)"></div>
+                                            <div class="eventEnd" draggable="false" style="@SingleSegStyle(ev, 20)" id="@SegIdEnd(ev, idx)">]</div>
+                                        </div>
+                                    }
+                                    else if (IsStart(idx, ev))
+                                    {
+                                        <div class="eventStart" draggable="false" style="@BackgroundStyle(ev)" id='@SegId(ev, idx, "start")'>[</div>
+                                    }
+                                    else if (IsEnd(idx, ev))
+                                    {
+                                        <div class="eventEnd" draggable="false" style="@BackgroundStyle(ev)" id='@SegId(ev, idx, "end")'>]</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="event" draggable="false" style="@BackgroundStyle(ev)" id='@SegId(ev, idx, "body")'></div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </td>
+            }
+        </tr>
+    }
+</table>
+
+@code{
+
+    public class GridEvent
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public int StartIndex { get; set; }
+        public int EndIndex { get; set; }
+        public string Color { get; set; } = "#64B5F6"; // default color
+    }
+
+    int Rows { get; set; } = 10;
+    int Cols { get; set; } = 10;
+    int TotalCells => Rows * Cols;
+
+    List<GridEvent> events = new List<GridEvent>
+    {
+        new GridEvent { StartIndex = 5 * 10 + 3, EndIndex = 5 * 10 + 6, Color = "#81C784" }
+    };
+
+    // Drag state
+    enum DragMode
+    {
+        None,
+        Move,
+        ResizeStart,
+        ResizeEnd
+    }
+
+    bool dragging = false;
+    DragMode dragMode = DragMode.None;
+    int dragOffsetCells = 0; // how far into the event the drag started
+    GridEvent? activeEvent = null;
+
+    // ---------- Rendering helpers ----------
+    private int GetIndex(int x, int y) => x * Cols + y;
+    private IEnumerable<GridEvent> EventsInCell(int idx) => events.Where(ev => idx >= ev.StartIndex && idx <= ev.EndIndex);
+    private static bool IsSingle(GridEvent ev) => ev.StartIndex == ev.EndIndex;
+    private static bool IsStart(int idx, GridEvent ev) => idx == ev.StartIndex;
+    private static bool IsEnd(int idx, GridEvent ev) => idx == ev.EndIndex;
+    private static string HeightPercent(int count) => count <= 0 ? "0%" : $"{100.0 / count}%";
+    private static int Clamp(int value, int min, int max) => Math.Max(min, Math.Min(max, value));
+    private static int Length(GridEvent ev) => ev.EndIndex - ev.StartIndex; // inclusive distance in steps
+    private static string BackgroundStyle(GridEvent ev) => $"background-color:{ev.Color}";
+    private static string SingleSegStyle(GridEvent ev, int widthPercent) => $"width:{widthPercent}%; height:100%; background-color:{ev.Color};";
+    private static string CellId(int idx) => $"cell-{idx}";
+    private static string SegId(GridEvent ev, int idx, string part) => $"ev-{ev.Id}-idx-{idx}-part-{part}";
+    private static string SegIdStart(GridEvent ev, int idx) => SegId(ev, idx, "start");
+    private static string SegIdBody(GridEvent ev, int idx) => SegId(ev, idx, "body");
+    private static string SegIdEnd(GridEvent ev, int idx) => SegId(ev, idx, "end");
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+    private class HitInfo { public int Row { get; set; } public int Col { get; set; } public int Idx { get; set; } public string? Part { get; set; } public int StackIndex { get; set; } }
+
+    // ---------- Drag logic ----------
+    private async Task OnTableMouseDown(MouseEventArgs e)
+    {
+        var hit = await JS.InvokeAsync<HitInfo>("dragGrid.getHitInfo", e.ClientX, e.ClientY, Cols);
+        if (hit is null) return;
+        var cellEvents = EventsInCell(hit.Idx).ToList();
+        if (cellEvents.Count == 0) return;
+        int stack = Clamp(hit.StackIndex, 0, cellEvents.Count - 1);
+        var ev = cellEvents[stack];
+        if (e.Button == 2)
+        {
+            events.Remove(ev);
+            StateHasChanged();
+            return;
+        }
+        if (e.Button != 0) return;
+        dragging = true;
+        activeEvent = ev;
+        dragMode = hit.Part switch { "start" => DragMode.ResizeStart, "end" => DragMode.ResizeEnd, _ => DragMode.Move };
+        dragOffsetCells = hit.Idx - ev.StartIndex;
+    }
+
+    private async Task OnTableMouseUp(MouseEventArgs e)
+    {
+        if (!dragging) return;
+        var hit = await JS.InvokeAsync<HitInfo>("dragGrid.getHitInfo", e.ClientX, e.ClientY, Cols);
+        if (hit is null) return;
+        OnDrop(e, hit.Row, hit.Col);
+    }
+
+    private void OnDrop(MouseEventArgs obj, int x, int y)
+    {
+        if (!dragging || activeEvent is null) return;
+
+        int dropIndex = GetIndex(x, y);
+        switch (dragMode)
+        {
+            case DragMode.Move:
+                MoveEvent(activeEvent, dropIndex);
+                break;
+            case DragMode.ResizeStart:
+                ResizeStartEvent(activeEvent, dropIndex);
+                break;
+            case DragMode.ResizeEnd:
+                ResizeEndEvent(activeEvent, dropIndex);
+                break;
+        }
+
+        dragging = false;
+        dragMode = DragMode.None;
+        activeEvent = null;
+        StateHasChanged();
+    }
+
+    private void MoveEvent(GridEvent ev, int dropIndex)
+    {
+        int len = Length(ev);
+        int newStart = Clamp(dropIndex - dragOffsetCells, 0, TotalCells - 1 - len);
+        ev.StartIndex = newStart;
+        ev.EndIndex = newStart + len;
+    }
+
+    private void ResizeStartEvent(GridEvent ev, int dropIndex)
+    {
+        int newStart = Clamp(Math.Min(dropIndex, ev.EndIndex), 0, ev.EndIndex);
+        ev.StartIndex = newStart;
+    }
+
+    private void ResizeEndEvent(GridEvent ev, int dropIndex)
+    {
+        int newEnd = Clamp(Math.Max(dropIndex, ev.StartIndex), ev.StartIndex, TotalCells - 1);
+        ev.EndIndex = newEnd;
+    }
+
+    // ---------- UI actions ----------
+    private void DeleteEvent(MouseEventArgs obj, GridEvent ev)
+    {
+        events.Remove(ev);
+        StateHasChanged();
+    }
+
+    private static readonly string[] Palette = new[]
+    {
+        "#E57373", "#64B5F6", "#81C784", "#FFD54F", "#BA68C8", "#4DB6AC", "#FF8A65", "#A1887F", "#90A4AE", "#F06292", "#7986CB"
+    };
+
+    private readonly Random _rng = new Random();
+    private string RandomColor() => Palette[_rng.Next(Palette.Length)];
+
+    private void AddNewEvent()
+    {
+        events.Add(new GridEvent { StartIndex = 0, EndIndex = 0, Color = RandomColor() });
+    }
+
 }

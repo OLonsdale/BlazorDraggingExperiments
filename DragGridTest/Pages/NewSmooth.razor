@@ -1,5 +1,139 @@
-<h3>NewSmooth</h3>
+@page "/bad"
+
+<input type="number" step="100" @bind-value="pixelsPerDay" /> px/day
+
+<div class="gantt-wrap" style="width:95vw; overflow:auto">
+    <table class="gantt">
+        <thead>
+        <tr>
+            @foreach (var day in range.GetDays(dayStartTime, dayEndTime))
+            {
+                <th colspan="">@day.Date.ToString("ddd dd")</th>
+            }
+        </tr>
+        <tr>
+            @foreach (var day in range.GetDays(dayStartTime, dayEndTime))
+            {
+                foreach (var hour in day.Hours)
+                {
+                    <th class="hour" style="width:@(pixelsPerDay / 24)">
+                        @if (pixelsPerDay > 200)
+                        {
+                            @hour.Value.ToString("HH")
+                        }
+                    </th>
+                }
+            }
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var day in range.GetDays(dayStartTime, dayEndTime))
+        {
+            foreach (var hour in day.Hours)
+            {
+                <td></td>
+            }
+        }
+        </tbody>
+    </table>
+</div>
 
 @code {
+    int pixelsPerDay = 1000;
+    TimeOnly dayStartTime = new(8, 0);
+    TimeOnly dayEndTime = new(18, 0);
+
+    DateRange range = new()
+    {
+        Start = new(day: 1, month: DateTime.Now.Month, year: DateTime.Now.Year),
+        End = new(day: DateTime.DaysInMonth(DateTime.Now.Year, DateTime.Now.Month), month: DateTime.Now.Month, year: DateTime.Now.Year)
+    };
+    
+    sealed class Hour
+    {
+        public DateTime Value { get; init; }
+    }
+
+    sealed class Day
+    {
+        public DateTime Date { get; }
+        public IReadOnlyList<Hour> Hours { get; }
+
+        public Day(DateTime date, TimeOnly workingStart, TimeOnly workingEnd)
+        {
+            Date = date.Date;
+            var list = new List<Hour>();
+            var start = Date.Add(workingStart.ToTimeSpan());
+            var end = Date.Add(workingEnd.ToTimeSpan());
+            for (var t = start; t < end; t = t.AddHours(1))
+                list.Add(new Hour { Value = t });
+            Hours = list;
+        }
+    }
+
+    sealed class DateRange
+    {
+        public DateTime Start { get; set; }
+        public DateTime End { get; set; }
+
+        public IEnumerable<Day> GetDays(TimeOnly workingStart, TimeOnly workingEnd)
+        {
+            for (var d = Start.Date; d <= End.Date; d = d.AddDays(1))
+                yield return new Day(d, workingStart, workingEnd);
+        }
+    }
+
+    int Year = DateTime.Now.Year, Month = DateTime.Now.Month;
+    DateOnly FirstDay, LastDay;
+
+    protected override void OnInitialized()
+    {
+        FirstDay = new DateOnly(Year, Month, 1);
+        LastDay = new DateOnly(Year, Month, DateTime.DaysInMonth(Year, Month));
+    }
+
+    bool IsWorkHour(DateOnly day, int hour)
+    {
+        var t = new TimeOnly(hour, 0);
+        if (dayEndTime <= dayStartTime) return t >= dayStartTime || t < dayEndTime; // overnight ranges
+        return t >= dayStartTime && t < dayEndTime;
+    }
     
 }
+
+<style>
+    .gantt {
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
+
+    .gantt td {
+        border: 1px solid #ddd;
+        height: 28px;
+    }
+    
+    .gantt th {
+        border: 1px solid #ddd;
+        height: 28px;
+        text-align: center;
+    }
+
+    .off {
+        background: #f5f5f5;
+    }
+
+    .work {
+        background: #fff;
+    }
+
+    .gantt-wrap {
+        position: relative;
+    }
+
+    .bar {
+        position: absolute;
+        height: 16px;
+        background: #4caf50;
+        border-radius: 4px;
+    }
+</style>
