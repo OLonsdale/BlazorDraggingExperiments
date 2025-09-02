@@ -10,28 +10,61 @@
     .action-col { text-align: center; }
     .slot-head { height: 28px; text-align: center; font-size: .85rem; width: var(--slot-w); }
 
-    .track-cell { padding: 0; }
-    .lane { position: relative; height: 28px; width: calc(var(--day-w) * var(--days)); user-select: none; -webkit-user-drag: none; touch-action: none; }
-    .bar { position: absolute; top: 2px; height: 24px; background: #e8f0ff; border: 1px solid #9bbcff; box-sizing: border-box; cursor: grab; }
+    .track-cell { padding: 0; overflow: hidden; }
+    .lane { position: relative; height: 28px; width: 100%; user-select: none; -webkit-user-drag: none; touch-action: none; }
+    .bar { position: absolute; top: 2px; height: 24px; background: #e8f0ff; border: 1px solid #9bbcff; box-sizing: border-box; cursor: grab; will-change: transform; }
     .bar:active { cursor: grabbing; }
     .bar.preview { outline: 2px dashed #7aa7ff; background: #eef5ff; pointer-events: none; }
     .bar.dragging { pointer-events: none; visibility: hidden; }
 
     table, th, td { -webkit-user-drag: none; user-select: none; }
+
+    .timeline-head { padding: 0; }
+    .ruler { display: flex; }
+    .ruler.days .day { text-align:center; border-left:1px solid #e5e5e5; }
+    .ruler.hours .hour { text-align:center; border-left:1px dashed #eee; font-size:.85rem; }
+
+    /* Minute ticks via background (no DOM flood) */
+    .ruler.mins-bg {
+        height: 20px;
+        position: relative;
+        background:
+          repeating-linear-gradient(
+            to right,
+            #ddd 0, #ddd 1px, transparent 1px var(--min-w)
+          ),
+          repeating-linear-gradient(
+            to right,
+            #bbb 0, #bbb 1px, transparent 1px var(--hour-w)
+          );
+    }
 </style>
 
-<InputCheckbox @bind-Value="showHours" /> hours |
-<InputCheckbox @bind-Value="usershowmins" /> mins |
+<InputDate @bind-Value="Range.Start" /> Range Start |
+<InputDate @bind-Value="Range.End" /> Range End |
 <input type="time" @bind="WorkingHours.Start" /> start |
 <input type="time" @bind="WorkingHours.End" /> end |
+<InputCheckbox @bind-Value="showHours" /> hours |
+<InputCheckbox @bind-Value="usershowmins" /> mins |
 <InputNumber @onmousewheel="WheelEv" @bind-Value="dayWidth" /> day width |
 <InputNumber @bind-Value="snapToMins" min="1" step="1" /> snap (mins)
+
+<div style="position:sticky; top:0; z-index:10; background:#fff9; backdrop-filter:saturate(150%) blur(4px); font:12px/1.2 system-ui; padding:.25rem .5rem; border:1px solid #ddd; width:max-content; border-radius:6px;">
+    <b>FPS:</b> @_latest.Fps
+    &nbsp;|&nbsp; <b>long tasks:</b> @_latest.LongTasks
+    &nbsp;|&nbsp; <b>max:</b> @_latest.Longest.ToString("0.0")ms
+    &nbsp;|&nbsp; <b>pointermove/s:</b> @_latest.PointerMoves * 4
+    &nbsp;|&nbsp; <b>lane DOM:</b> @_latest.DomNodes
+    &nbsp;|&nbsp; <b>bars:</b> @machines.Sum(x => x.Routings.Count)
+    &nbsp;|&nbsp; <b>renders:</b> @renderCount
+</div>
 
 <div class="container">
     <table draggable="false"
            @ondragstart:preventDefault
            style="
                --day-w:@($"{dayWidth}px");
+               --hours:@WorkingHours.HourSlots;
                --slots-per-day:@SlotsPerDay;
                --days:@DaysCount;
                --machine-w:180px;
@@ -42,67 +75,63 @@
            ">
         <colgroup>
             <col class="machine-col" style="width:var(--machine-w)" />
-            <col class="action-col" style="width:var(--action-w)" />
-            @foreach (var _ in Range.Days)
-            {
-                for (int i = 0; i < SlotsPerDay; i++)
-                {
-                    <col style="width:var(--slot-w)" />
-                }
-            }
+            <col class="action-col"  style="width:var(--action-w)" />
+            <col class="timeline-col" style="width:calc(var(--day-w) * var(--days))" />
         </colgroup>
 
         <thead>
         <tr>
             <th class="machine-col" rowspan="@HeaderRowSpan">Machine</th>
-            <th class="action-col" rowspan="@HeaderRowSpan">Action</th>
-            @foreach (var date in Range.Days)
-            {
-                <th colspan="@SlotsPerDay">@date.Day</th>
-            }
-        </tr>
+            <th class="action-col"  rowspan="@HeaderRowSpan">Action</th>
+            <th class="timeline-head">
+                <div class="ruler days" style="width:calc(var(--day-w) * var(--days))">
+                    @foreach (var date in Range.Days)
+                    {
+                        <div class="day" style="width:@($"{dayWidth}px")">@date.Day</div>
+                    }
+                </div>
 
-        @if (showHours)
-        {
-            <tr>
-                @foreach (var _ in Range.Days)
+                @if (showHours && dayWidth >= 200)
                 {
-                    @foreach (var h in WorkingHours.Hours)
-                    {
-                        <th colspan="4">@h.ToString("HH")</th>
-                    }
-                }
-            </tr>
-
-            @if (showMins)
-            {
-                <tr>
-                    @foreach (var _ in Range.Days)
-                    {
-                        @foreach (var __ in WorkingHours.Hours)
+                    <div class="ruler hours" style="width:calc(var(--day-w) * var(--days))">
+                        @foreach (var _ in Range.Days)
                         {
-                            <th class="slot-head">00</th>
-                            <th class="slot-head">15</th>
-                            <th class="slot-head">30</th>
-                            <th class="slot-head">45</th>
+                            @foreach (var h in WorkingHours.Hours)
+                            {
+                                <div class="hour" style="width:calc(var(--day-w) / @WorkingHours.HourSlots)">
+                                    @h.ToString("HH")
+                                </div>
+                            }
                         }
-                    }
-                </tr>
-            }
-        }
+                    </div>
+                }
+
+                @if (showHours && showMins && dayWidth >= 200)
+                {
+                    <div class="ruler mins-bg"
+                         style="
+                             height: 10px;
+                            --hour-w: calc(var(--day-w) / @WorkingHours.HourSlots);
+                            --min-w: calc(var(--hour-w) / 4);
+                            width:calc(var(--day-w) * var(--days));
+                         ">
+                    </div>
+                }
+            </th>
+        </tr>
         </thead>
 
         <tbody>
-        @foreach (var m in machines)
-        {
+        <Virtualize Items="machines" Context="m">
             <tr>
                 <td class="machine-col">@m.Name</td>
                 <td class="action-col"><button @onclick="() => OnMachineAction(m)">⋯</button></td>
 
-                <td class="track-cell" colspan="@(DaysCount * SlotsPerDay)">
+                <td class="track-cell">
                     <div class="lane"
                          @onpointermove="(e) => LaneMove(e, m)"
                          @onpointerup="(e) => LaneUp(e, m)">
+
                         @foreach (var r in m.Routings)
                         {
                             var left = OffsetPx(r.TimeSpan.Start);
@@ -110,7 +139,7 @@
                             if (width > 0)
                             {
                                 <div class="bar @(drag?.Routing == r ? "dragging" : "")"
-                                     style="left:@($"{left}px"); width:@($"{width}px")"
+                                     style="@($"transform:translateX({left}px); width:{width}px")"
                                      @onpointerdown="(e) => BarDown(e, m, r, left, width)">
                                 </div>
                             }
@@ -118,12 +147,12 @@
 
                         @if (preview is not null && preview.Machine == m)
                         {
-                            <div class="bar preview" style="left:@($"{preview.LeftPx}px"); width:@($"{preview.WidthPx}px")"></div>
+                            <div class="bar preview" style="@($"transform:translateX({preview.LeftPx}px); width:{preview.WidthPx}px")"></div>
                         }
                     </div>
                 </td>
             </tr>
-        }
+        </Virtualize>
         </tbody>
     </table>
 </div>
@@ -136,17 +165,44 @@
     bool usershowmins = true;
     bool showMins => showHours && usershowmins;
 
-    DateRange Range = new()
-    {
-        Start = new(DateTime.Now.Year, DateTime.Now.Month, 1),
-        End = new(DateTime.Now.Year, DateTime.Now.Month, DateTime.DaysInMonth(DateTime.Now.Year, DateTime.Now.Month))
-    };
+    DateRange Range = new();
 
     TimeRange WorkingHours = new() { Start = new TimeOnly(8, 0), End = new TimeOnly(17, 0) };
+    
+    int renderCount = 0;
+    System.Diagnostics.Stopwatch renderSw = new();
 
-    List<Machine> machines = [new("Lathe"), new("Mill"), new("Sander")];
+    protected override bool ShouldRender()
+    {
+        renderCount++;
+        return base.ShouldRender();
+    }
 
-    int HeaderRowSpan => 1 + (showHours ? 1 : 0) + (showHours && showMins ? 1 : 0);
+    List<Machine> machines =
+    [
+        new("Lathe"),
+        new("Milling Machine"),
+        new("Surface Grinder"),
+        new("CNC Router"),
+        new("Hydraulic Press"),
+        new("Injection Molder"),
+        new("Die Cutter"),
+        new("Plasma Cutter"),
+        new("Laser Engraver"),
+        new("3D Printer"),
+        new("CNC Turning Center"),
+        new("Drill Press"),
+        new("Band Saw"),
+        new("Waterjet Cutter"),
+        new("Gear Hobbing Machine"),
+        new("Welding Station"),
+        new("Sheet Metal Brake"),
+        new("Punch Press"),
+        new("Vertical Machining Center"),
+        new("Horizontal Boring Mill")
+    ];
+
+    int HeaderRowSpan => 1 + (showHours && dayWidth >= 200 ? 1 : 0) + (showHours && showMins ? 1 : 0);
     int SlotsPerDay => WorkingHours.HourSlots * 4;
     int DaysCount => (int)(Range.End.Date - Range.Start.Date).TotalDays + 1;
 
@@ -179,20 +235,51 @@
         }
     }
 
-    protected override void OnInitialized()
+    static Routing CreateRandomRouting(DateRange range, TimeRange hours, int minDurationMin = 30, int maxDurationMin = 240)
     {
-        var d = DateTime.Today.AddDays(1);
-        machines.First().Routings =
-        [
-            new Routing
-            {
-                Sequence = 1,
-                TimeSpan = new DateRange { Start = d.AddHours(9).AddMinutes(15), End = d.AddHours(12).AddMinutes(45) }
-            }
-        ];
+        var rnd = Random.Shared;
+
+        var dayCount = (range.End.Date - range.Start.Date).Days + 1;
+        var day = range.Start.Date.AddDays(rnd.Next(dayCount));
+
+        var workingMins = (int)(hours.End - hours.Start).TotalMinutes;
+        var duration = Math.Clamp(rnd.Next(minDurationMin, maxDurationMin + 1), 1, workingMins);
+        var latestStart = workingMins - duration;
+        var startOffset = rnd.Next(latestStart + 1);
+
+        var start = day
+            .AddHours(hours.Start.Hour)
+            .AddMinutes(hours.Start.Minute + startOffset);
+
+        var end = start.AddMinutes(duration);
+
+        return new Routing
+        {
+            TimeSpan = new DateRange { Start = start, End = end }
+        };
     }
 
-    class Machine { public Machine(string name) { Name = name; } public string Name { get; } public List<Routing> Routings = []; }
+    Routing RandomRouting() => CreateRandomRouting(Range, WorkingHours);
+    List<Routing> RandomRoutings(int count) => Enumerable.Range(0, count).Select(_ => CreateRandomRouting(Range, WorkingHours)).ToList();
+
+    protected override void OnInitialized()
+    {
+        var start = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
+
+        Range = new()
+        {
+            Start = start,
+            End   = start.AddMonths(3).AddDays(-1)
+        };
+
+        machines.ForEach(x => x.Routings = RandomRoutings(20));
+    }
+
+    class Machine(string name)
+    {
+        public string Name { get; } = name;
+        public List<Routing> Routings = [];
+    }
 
     double MinutesPerDay => (WorkingHours.End - WorkingHours.Start).TotalMinutes;
     double PxPerMinute => dayWidth / Math.Max(1.0, MinutesPerDay);
@@ -243,7 +330,7 @@
 
     void BarDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx)
     {
-        var grab = e.OffsetX; // relative to bar
+        var grab = e.OffsetX;
         drag = new(m, r, grab, widthPx);
         preview = new(m, leftPx, widthPx);
         StateHasChanged();
@@ -252,9 +339,14 @@
     void LaneMove(PointerEventArgs e, Machine m)
     {
         if (drag is null) return;
+
         var proposedLeft = e.OffsetX - drag.GrabOffsetPx;
-        var newLeft = SnapLeftPx(proposedLeft, drag.WidthPx);
-        preview = new(m, newLeft, drag.WidthPx);
+        var snapped = SnapLeftPx(proposedLeft, drag.WidthPx);
+
+        if (preview is not null && preview.Machine == m && Math.Abs(preview.LeftPx - snapped) < 0.5)
+            return;
+
+        preview = new(m, snapped, drag.WidthPx);
         StateHasChanged();
     }
 
@@ -283,6 +375,46 @@
     private void WheelEv(WheelEventArgs ev)
     {
         int v = ev.AltKey ? 100 : 10;
-        dayWidth = Math.Clamp(dayWidth + (ev.DeltaY > 0 ? v : -v), 200, 4000);
+        dayWidth = Math.Clamp(dayWidth + (ev.DeltaY > 0 ? v : -v), 100, 4000);
+    }
+    
+    IJSObjectReference? _perf;
+    System.Timers.Timer? _perfTimer;
+    PerfSnap _latest = new();
+
+    record PerfSnap(double Fps = 0, int LongTasks = 0, double Longest = 0, int PointerMoves = 0, int DomNodes = 0);
+
+    [Inject] IJSRuntime JS { set; get; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        _perf = await JS.InvokeAsync<IJSObjectReference>("import", "./js/perf.js");
+        await _perf.InvokeVoidAsync("start", ".lane");
+        _perfTimer = new System.Timers.Timer(250);
+        _perfTimer.Elapsed += async (_, __) =>
+        {
+            if (_perf is null) return;
+            var snap = await _perf.InvokeAsync<PerfDto>("snapshot", ".track-cell");
+            _latest = new PerfSnap(snap.fps, snap.longTasks, snap.longest, snap.pmCount, snap.domNodes);
+            InvokeAsync(StateHasChanged);
+        };
+        _perfTimer.AutoReset = true;
+        _perfTimer.Start();
+    }
+
+    public class PerfDto { public double fps { get; set; } public int longTasks { get; set; } public double longest { get; set; } public int pmCount { get; set; } public int domNodes { get; set; } }
+
+    public override async Task SetParametersAsync(ParameterView parameters)
+    {
+        await base.SetParametersAsync(parameters);
+    }
+
+    public void Dispose()
+    {
+        _perfTimer?.Stop();
+        _perfTimer?.Dispose();
+        _ = _perf?.InvokeVoidAsync("stop");
     }
 }
