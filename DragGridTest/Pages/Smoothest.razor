@@ -1,5 +1,8 @@
 @page "/"
+@implements IDisposable
+@inject IJSRuntime JS
 
+<!--suppress CssUnresolvedCustomProperty -->
 <style>
     table { border-collapse: collapse; table-layout: fixed; }
     th, td { border: 1px solid #d0d0d0; padding: 0; box-sizing: border-box; }
@@ -8,13 +11,12 @@
 
     .machine-col { white-space: nowrap; padding: 0 .5rem; }
     .action-col { text-align: center; }
-    .slot-head { height: 28px; text-align: center; font-size: .85rem; width: var(--slot-w); }
-
     .track-cell { padding: 0; overflow: hidden; }
+
     .lane { position: relative; height: 28px; width: 100%; user-select: none; -webkit-user-drag: none; touch-action: none; }
     .bar { position: absolute; top: 2px; height: 24px; background: #e8f0ff; border: 1px solid #9bbcff; box-sizing: border-box; cursor: grab; will-change: transform; }
     .bar:active { cursor: grabbing; }
-    .bar.preview { outline: 2px dashed #7aa7ff; background: #eef5ff; pointer-events: none; }
+    .bar.preview { outline: 2px dashed #7aa7ff; background: #eef5ff; pointer-events: none; display:none; }
     .bar.dragging { pointer-events: none; visibility: hidden; }
 
     table, th, td { -webkit-user-drag: none; user-select: none; }
@@ -24,24 +26,17 @@
     .ruler.days .day { text-align:center; border-left:1px solid #e5e5e5; }
     .ruler.hours .hour { text-align:center; border-left:1px dashed #eee; font-size:.85rem; }
 
-    /* Minute ticks via background (no DOM flood) */
     .ruler.mins-bg {
         height: 20px;
         position: relative;
         background:
-          repeating-linear-gradient(
-            to right,
-            #ddd 0, #ddd 1px, transparent 1px var(--min-w)
-          ),
-          repeating-linear-gradient(
-            to right,
-            #bbb 0, #bbb 1px, transparent 1px var(--hour-w)
-          );
+            repeating-linear-gradient(to right, #ddd 0, #ddd 1px, transparent 1px var(--slot-w)),
+            repeating-linear-gradient(to right, #bbb 0, #bbb 1px, transparent 1px var(--hour-w));
     }
 </style>
 
-<InputDate @bind-Value="Range.Start" /> Range Start |
-<InputDate @bind-Value="Range.End" /> Range End |
+<InputDate @bind-Value="Range.StartDate" /> Range Start |
+<InputDate @bind-Value="Range.EndDateInclusive" /> Range End |
 <input type="time" @bind="WorkingHours.Start" /> start |
 <input type="time" @bind="WorkingHours.End" /> end |
 <InputCheckbox @bind-Value="showHours" /> hours |
@@ -64,13 +59,14 @@
            @ondragstart:preventDefault
            style="
                --day-w:@($"{dayWidth}px");
-               --hours:@WorkingHours.HourSlots;
-               --slots-per-day:@SlotsPerDay;
                --days:@DaysCount;
                --machine-w:180px;
                --action-w:56px;
                --left-w: calc(var(--machine-w) + var(--action-w));
-               --slot-w: calc(var(--day-w) / var(--slots-per-day));
+               --mins-per-day:@(Math.Max(1, MinutesPerDay).ToString("0"));
+               --px-per-min: calc(var(--day-w) / var(--mins-per-day));
+               --hour-w: calc(var(--px-per-min) * 60);
+               --slot-w: calc(var(--px-per-min) * @MinutesPerSlot);
                width: calc(var(--left-w) + (var(--day-w) * var(--days)));
            ">
         <colgroup>
@@ -85,37 +81,28 @@
             <th class="action-col"  rowspan="@HeaderRowSpan">Action</th>
             <th class="timeline-head">
                 <div class="ruler days" style="width:calc(var(--day-w) * var(--days))">
-                    @foreach (var date in Range.Days)
+                    @foreach (var date in Range.DaysInclusive)
                     {
                         <div class="day" style="width:@($"{dayWidth}px")">@date.Day</div>
                     }
                 </div>
 
-                @if (showHours && dayWidth >= 200)
+                @if (ShowHoursRow)
                 {
                     <div class="ruler hours" style="width:calc(var(--day-w) * var(--days))">
-                        @foreach (var _ in Range.Days)
+                        @foreach (var _ in Range.DaysInclusive)
                         {
                             @foreach (var h in WorkingHours.Hours)
                             {
-                                <div class="hour" style="width:calc(var(--day-w) / @WorkingHours.HourSlots)">
-                                    @h.ToString("HH")
-                                </div>
+                                <div class="hour" style="width:calc(var(--px-per-min) * 60)">@h.ToString("HH")</div>
                             }
                         }
                     </div>
                 }
 
-                @if (showHours && showMins && dayWidth >= 200)
+                @if (ShowMinsRow)
                 {
-                    <div class="ruler mins-bg"
-                         style="
-                             height: 10px;
-                            --hour-w: calc(var(--day-w) / @WorkingHours.HourSlots);
-                            --min-w: calc(var(--hour-w) / 4);
-                            width:calc(var(--day-w) * var(--days));
-                         ">
-                    </div>
+                    <div class="ruler mins-bg" style="height: 10px; width:calc(var(--day-w) * var(--days));"></div>
                 }
             </th>
         </tr>
@@ -129,13 +116,16 @@
 
                 <td class="track-cell">
                     <div class="lane"
-                         @onpointermove="(e) => LaneMove(e, m)"
-                         @onpointerup="(e) => LaneUp(e, m)">
+                         data-lane-idx="@m.Index"
+                         @ref="m.LaneRef"
+                         @onpointermove="LaneMove"
+                         @onpointerup="LaneUp"
+                         @onpointercancel="LaneCancel">
 
                         @foreach (var r in m.Routings)
                         {
                             var left = OffsetPx(r.TimeSpan.Start);
-                            var width = WidthPx(r.TimeSpan.Start, r.TimeSpan.End);
+                            var width = WidthPx(r.TimeSpan.Start, r.TimeSpan.EndExclusive);
                             if (width > 0)
                             {
                                 <div class="bar @(drag?.Routing == r ? "dragging" : "")"
@@ -145,10 +135,7 @@
                             }
                         }
 
-                        @if (preview is not null && preview.Machine == m)
-                        {
-                            <div class="bar preview" style="@($"transform:translateX({preview.LeftPx}px); width:{preview.WidthPx}px")"></div>
-                        }
+                        <div class="bar preview" @ref="m.PreviewRef"></div>
                     </div>
                 </td>
             </tr>
@@ -158,25 +145,23 @@
 </div>
 
 @code {
+    const int MinutesPerSlot = 15;
+
     int dayWidth = 1000;
     int snapToMins = 5;
 
     bool showHours = true;
     bool usershowmins = true;
-    bool showMins => showHours && usershowmins;
+
+    bool ShowHoursRow => showHours && dayWidth >= 200;
+    bool ShowMinsRow => ShowHoursRow && usershowmins;
+    int HeaderRowSpan => 1 + (ShowHoursRow ? 1 : 0) + (ShowMinsRow ? 1 : 0);
 
     DateRange Range = new();
-
     TimeRange WorkingHours = new() { Start = new TimeOnly(8, 0), End = new TimeOnly(17, 0) };
-    
-    int renderCount = 0;
-    System.Diagnostics.Stopwatch renderSw = new();
 
-    protected override bool ShouldRender()
-    {
-        renderCount++;
-        return base.ShouldRender();
-    }
+    int renderCount = 0;
+    protected override bool ShouldRender() { renderCount++; return true; }
 
     List<Machine> machines =
     [
@@ -202,35 +187,61 @@
         new("Horizontal Boring Mill")
     ];
 
-    int HeaderRowSpan => 1 + (showHours && dayWidth >= 200 ? 1 : 0) + (showHours && showMins ? 1 : 0);
-    int SlotsPerDay => WorkingHours.HourSlots * 4;
-    int DaysCount => (int)(Range.End.Date - Range.Start.Date).TotalDays + 1;
+    int DaysCount => Math.Max(1, Range.DaysCount);
+    double MinutesPerDay => Math.Max(0, (WorkingHours.End - WorkingHours.Start).TotalMinutes);
+    double PxPerMinute => dayWidth / Math.Max(1.0, MinutesPerDay);
+    double LaneWidthPx => dayWidth * DaysCount;
 
     void OnMachineAction(Machine m) { }
 
     class Routing { public Guid Id = Guid.NewGuid(); public int Sequence; public DateRange TimeSpan = new(); }
-    class BomItem { }
-    class WorksOrder { string Name { set; get; } List<Routing> operations = []; List<BomItem> Bom = []; }
 
     class DateRange
     {
         public DateTime Start { get; set; }
-        public DateTime End { get; set; }
-        public IEnumerable<DateTime> Days { get { for (var d = Start.Date; d <= End.Date; d = d.AddDays(1)) yield return d; } }
-        public bool Contains(DateTime t) => t >= Start && t < End;
+        public DateTime EndExclusive { get; set; }
+
+        public DateTime StartDate
+        {
+            get => Start.Date;
+            set { Start = value.Date; if (EndExclusive <= Start) EndExclusive = Start.AddDays(1); }
+        }
+
+        public DateTime EndDateInclusive
+        {
+            get => EndExclusive.Date.AddDays(-1);
+            set { EndExclusive = value.Date.AddDays(1); if (EndExclusive <= Start) EndExclusive = Start.AddDays(1); }
+        }
+
+        public int DaysCount => (int)Math.Max(1, (EndExclusive.Date - Start.Date).TotalDays);
+
+        public IEnumerable<DateTime> DaysInclusive
+        {
+            get
+            {
+                var last = EndExclusive.Date.AddDays(-1);
+                for (var d = Start.Date; d <= last; d = d.AddDays(1))
+                    yield return d;
+            }
+        }
     }
 
     class TimeRange
     {
         public TimeOnly Start;
         public TimeOnly End;
-        public int HourSlots => End <= Start ? 0 : (int)Math.Floor((End - Start).TotalHours);
+
         public IEnumerable<TimeOnly> Hours
         {
             get
             {
-                var h = new TimeOnly(Start.Hour, 0);
-                for (int i = 0; i < HourSlots; i++) yield return h.AddHours(i);
+                if (End <= Start) yield break;
+
+                var first = new TimeOnly(Start.Hour, 0);
+                if (first < Start) first = first.AddHours(1);
+
+                for (var h = first; h < End; h = h.AddHours(1))
+                    yield return h;
             }
         }
     }
@@ -239,51 +250,45 @@
     {
         var rnd = Random.Shared;
 
-        var dayCount = (range.End.Date - range.Start.Date).Days + 1;
-        var day = range.Start.Date.AddDays(rnd.Next(dayCount));
+        var dayCount = (range.EndExclusive.Date - range.Start.Date).Days;
+        var day = range.Start.Date.AddDays(rnd.Next(Math.Max(1, dayCount)));
 
-        var workingMins = (int)(hours.End - hours.Start).TotalMinutes;
+        var workingMins = (int)Math.Max(0, (hours.End - hours.Start).TotalMinutes);
+        if (workingMins <= 0)
+            return new Routing { TimeSpan = new DateRange { Start = day, EndExclusive = day.AddMinutes(1) } };
+
         var duration = Math.Clamp(rnd.Next(minDurationMin, maxDurationMin + 1), 1, workingMins);
-        var latestStart = workingMins - duration;
+        var latestStart = Math.Max(0, workingMins - duration);
         var startOffset = rnd.Next(latestStart + 1);
 
-        var start = day
-            .AddHours(hours.Start.Hour)
-            .AddMinutes(hours.Start.Minute + startOffset);
-
+        var start = day.AddHours(hours.Start.Hour).AddMinutes(hours.Start.Minute + startOffset);
         var end = start.AddMinutes(duration);
 
-        return new Routing
-        {
-            TimeSpan = new DateRange { Start = start, End = end }
-        };
+        return new Routing { TimeSpan = new DateRange { Start = start, EndExclusive = end } };
     }
 
-    Routing RandomRouting() => CreateRandomRouting(Range, WorkingHours);
     List<Routing> RandomRoutings(int count) => Enumerable.Range(0, count).Select(_ => CreateRandomRouting(Range, WorkingHours)).ToList();
 
     protected override void OnInitialized()
     {
         var start = new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1);
 
-        Range = new()
-        {
-            Start = start,
-            End   = start.AddMonths(3).AddDays(-1)
-        };
+        Range = new() { Start = start, EndExclusive = start.AddMonths(3) };
+
+        for (var i = 0; i < machines.Count; i++)
+            machines[i].Index = i;
 
         machines.ForEach(x => x.Routings = RandomRoutings(20));
     }
 
     class Machine(string name)
     {
+        public int Index { get; set; }
         public string Name { get; } = name;
         public List<Routing> Routings = [];
+        public ElementReference LaneRef;
+        public ElementReference PreviewRef;
     }
-
-    double MinutesPerDay => (WorkingHours.End - WorkingHours.Start).TotalMinutes;
-    double PxPerMinute => dayWidth / Math.Max(1.0, MinutesPerDay);
-    double LaneWidthPx => dayWidth * DaysCount;
 
     DateTime DayWorkingStart(DateTime d) => d.Date.AddHours(WorkingHours.Start.Hour).AddMinutes(WorkingHours.Start.Minute);
 
@@ -308,7 +313,7 @@
     DateTime TimeFromPx(double x)
     {
         var mins = Math.Clamp(x, 0, LaneWidthPx) / PxPerMinute;
-        var day = Math.Floor(mins / MinutesPerDay);
+        var day = Math.Floor(mins / Math.Max(1.0, MinutesPerDay));
         var inDay = mins - day * MinutesPerDay;
         var baseDay = Range.Start.Date.AddDays(day);
         return DayWorkingStart(baseDay).AddMinutes(inDay);
@@ -322,93 +327,172 @@
         return Math.Clamp(snapped, 0, LaneWidthPx - widthPx);
     }
 
-    record PreviewState(Machine Machine, double LeftPx, double WidthPx);
-    record DragState(Machine Origin, Routing Routing, double GrabOffsetPx, double WidthPx);
+    record DragState(Machine Origin, Routing Routing, long PointerId, double GrabOffsetPx, double WidthPx);
 
-    PreviewState? preview;
-    DragState? drag;
-
-    void BarDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx)
+    sealed class LaneHit
     {
-        var grab = e.OffsetX;
-        drag = new(m, r, grab, widthPx);
-        preview = new(m, leftPx, widthPx);
+        public int idx { get; set; }
+        public double offsetX { get; set; }
+    }
+
+    DragState? drag;
+    int _lastHitIdx = -1;
+    Machine? _previewMachine;
+    IJSObjectReference? _ui;
+
+    async Task ShowPreviewAsync(Machine m, double leftPx, double widthPx)
+    {
+        if (_ui is null) return;
+
+        if (_previewMachine is not null && _previewMachine != m)
+            await _ui.InvokeVoidAsync("hidePreview", _previewMachine.PreviewRef);
+
+        _previewMachine = m;
+        await _ui.InvokeVoidAsync("showPreview", m.PreviewRef, leftPx, widthPx);
+    }
+
+    async Task HidePreviewAsync(Machine m)
+    {
+        if (_ui is null) return;
+        await _ui.InvokeVoidAsync("hidePreview", m.PreviewRef);
+        if (_previewMachine == m) _previewMachine = null;
+    }
+
+    async Task<LaneHit?> HitLaneAsync(PointerEventArgs e)
+    {
+        if (_ui is null) return null;
+        var hit = await _ui.InvokeAsync<LaneHit>("laneHit", e.ClientX, e.ClientY);
+        if (hit.idx < 0 || hit.idx >= machines.Count) return null;
+        return hit;
+    }
+
+    Task BarDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx) => BarDownImpl(e, m, r, leftPx, widthPx);
+    async Task BarDownImpl(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx)
+    {
+        drag = new(m, r, e.PointerId, e.OffsetX, widthPx);
+        _lastHitIdx = m.Index;
+
+        if (_ui is not null)
+            await _ui.InvokeVoidAsync("capture", m.LaneRef, e.PointerId);
+
+        await ShowPreviewAsync(m, leftPx, widthPx);
         StateHasChanged();
     }
 
-    void LaneMove(PointerEventArgs e, Machine m)
+    Task LaneMove(PointerEventArgs e) => LaneMoveImpl(e);
+    async Task LaneMoveImpl(PointerEventArgs e)
     {
         if (drag is null) return;
 
-        var proposedLeft = e.OffsetX - drag.GrabOffsetPx;
+        var hit = await HitLaneAsync(e);
+        if (hit is null) return;
+
+        _lastHitIdx = hit.idx;
+        var target = machines[_lastHitIdx];
+
+        var proposedLeft = hit.offsetX - drag.GrabOffsetPx;
         var snapped = SnapLeftPx(proposedLeft, drag.WidthPx);
 
-        if (preview is not null && preview.Machine == m && Math.Abs(preview.LeftPx - snapped) < 0.5)
-            return;
-
-        preview = new(m, snapped, drag.WidthPx);
-        StateHasChanged();
+        await ShowPreviewAsync(target, snapped, drag.WidthPx);
     }
 
-    void LaneUp(PointerEventArgs e, Machine m)
+    Task LaneUp(PointerEventArgs e) => LaneUpImpl(e);
+    async Task LaneUpImpl(PointerEventArgs e)
     {
-        if (drag is null || preview is null) { drag = null; preview = null; return; }
+        if (drag is null) return;
 
-        var startSnapped = SnapLeftPx(preview.LeftPx, preview.WidthPx);
+        var hit = await HitLaneAsync(e);
+        if (hit is not null) _lastHitIdx = hit.idx;
+        if (_lastHitIdx < 0 || _lastHitIdx >= machines.Count) _lastHitIdx = drag.Origin.Index;
+
+        var target = machines[_lastHitIdx];
+
+        var offsetX = hit?.offsetX ?? 0;
+        var proposedLeft = offsetX - drag.GrabOffsetPx;
+        var startSnapped = SnapLeftPx(proposedLeft, drag.WidthPx);
+
         var newStart = TimeFromPx(startSnapped);
-        var newEnd = TimeFromPx(startSnapped + preview.WidthPx);
+        var newEnd = TimeFromPx(startSnapped + drag.WidthPx);
 
-        if (m != drag.Origin)
+        if (target != drag.Origin)
         {
             drag.Origin.Routings.Remove(drag.Routing);
-            m.Routings.Add(drag.Routing);
+            target.Routings.Add(drag.Routing);
         }
 
         drag.Routing.TimeSpan.Start = newStart;
-        drag.Routing.TimeSpan.End = newEnd;
+        drag.Routing.TimeSpan.EndExclusive = newEnd;
+
+        if (_ui is not null)
+            await _ui.InvokeVoidAsync("release", drag.Origin.LaneRef, drag.PointerId);
+
+        if (_previewMachine is not null)
+            await HidePreviewAsync(_previewMachine);
 
         drag = null;
-        preview = null;
+        _lastHitIdx = -1;
         StateHasChanged();
     }
 
-    private void WheelEv(WheelEventArgs ev)
+    Task LaneCancel(PointerEventArgs e) => LaneCancelImpl(e);
+    async Task LaneCancelImpl(PointerEventArgs e)
+    {
+        if (drag is null) return;
+
+        if (_ui is not null)
+            await _ui.InvokeVoidAsync("release", drag.Origin.LaneRef, drag.PointerId);
+
+        if (_previewMachine is not null)
+            await HidePreviewAsync(_previewMachine);
+
+        drag = null;
+        _lastHitIdx = -1;
+        StateHasChanged();
+    }
+
+    void WheelEv(WheelEventArgs ev)
     {
         int v = ev.AltKey ? 100 : 10;
         dayWidth = Math.Clamp(dayWidth + (ev.DeltaY > 0 ? v : -v), 100, 4000);
     }
-    
-    IJSObjectReference? _perf;
+
     System.Timers.Timer? _perfTimer;
+    IJSObjectReference? _perf;
     PerfSnap _latest = new();
-
     record PerfSnap(double Fps = 0, int LongTasks = 0, double Longest = 0, int PointerMoves = 0, int DomNodes = 0);
-
-    [Inject] IJSRuntime JS { set; get; }
+    public class PerfDto { public double fps { get; set; } public int longTasks { get; set; } public double longest { get; set; } public int pmCount { get; set; } public int domNodes { get; set; } }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
 
+        _ui = await JS.InvokeAsync<IJSObjectReference>("import", "./js/timeline-ui.js");
+
         _perf = await JS.InvokeAsync<IJSObjectReference>("import", "./js/perf.js");
         await _perf.InvokeVoidAsync("start", ".lane");
+
         _perfTimer = new System.Timers.Timer(250);
+        var busy = 0;
+
         _perfTimer.Elapsed += async (_, __) =>
         {
             if (_perf is null) return;
-            var snap = await _perf.InvokeAsync<PerfDto>("snapshot", ".track-cell");
-            _latest = new PerfSnap(snap.fps, snap.longTasks, snap.longest, snap.pmCount, snap.domNodes);
-            InvokeAsync(StateHasChanged);
+            if (Interlocked.Exchange(ref busy, 1) == 1) return;
+
+            try
+            {
+                var snap = await _perf.InvokeAsync<PerfDto>("snapshot", ".track-cell");
+                _latest = new PerfSnap(snap.fps, snap.longTasks, snap.longest, snap.pmCount, snap.domNodes);
+                await InvokeAsync(StateHasChanged);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref busy, 0);
+            }
         };
+
         _perfTimer.AutoReset = true;
         _perfTimer.Start();
-    }
-
-    public class PerfDto { public double fps { get; set; } public int longTasks { get; set; } public double longest { get; set; } public int pmCount { get; set; } public int domNodes { get; set; } }
-
-    public override async Task SetParametersAsync(ParameterView parameters)
-    {
-        await base.SetParametersAsync(parameters);
     }
 
     public void Dispose()
@@ -416,5 +500,7 @@
         _perfTimer?.Stop();
         _perfTimer?.Dispose();
         _ = _perf?.InvokeVoidAsync("stop");
+        _ = _ui?.DisposeAsync();
+        _ = _perf?.DisposeAsync();
     }
 }
