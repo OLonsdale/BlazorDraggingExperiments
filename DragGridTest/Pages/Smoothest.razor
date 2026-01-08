@@ -1,50 +1,155 @@
+<!--suppress CssUnresolvedCustomProperty -->
 @page "/"
 @implements IDisposable
 @inject IJSRuntime JS
 
-<!--suppress CssUnresolvedCustomProperty -->
 <style>
-    table { border-collapse: collapse; table-layout: fixed; }
-    th, td { border: 1px solid #d0d0d0; padding: 0; box-sizing: border-box; }
-    thead th { background: #f6f8fa; font-weight: 600; font-size: .9rem; }
-    .container { width: 95vw; overflow: auto; }
+    table {
+        border-collapse: collapse;
+        table-layout: fixed;
+    }
 
-    .machine-col { white-space: nowrap; padding: 0 .5rem; }
-    .action-col { text-align: center; }
-    .track-cell { padding: 0; overflow: hidden; }
+    th, td {
+        border: 1px solid #d0d0d0;
+        padding: 0;
+        box-sizing: border-box;
+    }
 
-    .lane { position: relative; height: 28px; width: 100%; user-select: none; -webkit-user-drag: none; touch-action: none; }
-    .bar { position: absolute; top: 2px; height: 24px; background: #e8f0ff; border: 1px solid #9bbcff; box-sizing: border-box; cursor: grab; will-change: transform; }
-    .bar:active { cursor: grabbing; }
-    .bar.preview { outline: 2px dashed #7aa7ff; background: #eef5ff; pointer-events: none; display:none; }
-    .bar.dragging { pointer-events: none; visibility: hidden; }
+    thead th {
+        background: #f6f8fa;
+        font-weight: 600;
+        font-size: .9rem;
+    }
 
-    table, th, td { -webkit-user-drag: none; user-select: none; }
+    .container {
+        width: 95vw;
+        overflow: auto;
+    }
 
-    .timeline-head { padding: 0; }
-    .ruler { display: flex; }
-    .ruler.days .day { text-align:center; border-left:1px solid #e5e5e5; }
-    .ruler.hours .hour { text-align:center; border-left:1px dashed #eee; font-size:.85rem; }
+    .machine-col {
+        white-space: nowrap;
+        padding: 0 .5rem;
+    }
+
+    .action-col {
+        text-align: center;
+    }
+
+    .track-cell {
+        padding: 0;
+        overflow: hidden;
+    }
+
+    .lane {
+        position: relative;
+        height: var(--lane-h);
+        width: 100%;
+        user-select: none;
+        -webkit-user-drag: none;
+        touch-action: none;
+        overflow: hidden;
+    }
+
+    .bar {
+        position: absolute;
+        height: var(--bar-h);
+        box-sizing: border-box;
+        cursor: grab;
+        will-change: transform;
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        overflow: hidden;
+        z-index: 1;
+        border-radius: 4px;
+    }
+
+    .bar:active {
+        cursor: grabbing;
+    }
+
+    .bar.preview {
+        outline: 2px dashed #7aa7ff;
+        pointer-events: none;
+        display: none;
+        z-index: 3;
+    }
+
+    .bar.dragging {
+        pointer-events: none;
+        visibility: hidden;
+    }
+
+    .bar .label {
+        pointer-events: none;
+        user-select: none;
+        font: 600 12px/1.1 system-ui;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        width: 100%;
+    }
+
+    .handle {
+        position: absolute;
+        top: 0;
+        width: 10px;
+        height: 100%;
+        cursor: ew-resize;
+        z-index: 2;
+    }
+
+    .handle.left {
+        left: 0;
+    }
+
+    .handle.right {
+        right: 0;
+    }
+
+    table, th, td {
+        -webkit-user-drag: none;
+        user-select: none;
+    }
+
+    .timeline-head {
+        padding: 0;
+    }
+
+    .ruler {
+        display: flex;
+    }
+
+    .ruler.days .day {
+        text-align: center;
+        border-left: 1px solid #e5e5e5;
+    }
+
+    .ruler.hours .hour {
+        text-align: center;
+        border-left: 1px dashed #eee;
+        font-size: .85rem;
+    }
 
     .ruler.mins-bg {
         height: 20px;
         position: relative;
-        background:
-            repeating-linear-gradient(to right, #ddd 0, #ddd 1px, transparent 1px var(--slot-w)),
-            repeating-linear-gradient(to right, #bbb 0, #bbb 1px, transparent 1px var(--hour-w));
+        background: repeating-linear-gradient(to right, #ddd 0, #ddd 1px, transparent 1px var(--slot-w)),
+        repeating-linear-gradient(to right, #bbb 0, #bbb 1px, transparent 1px var(--hour-w));
     }
 </style>
 
-<InputDate @bind-Value="Range.StartDate" /> Range Start |
-<InputDate @bind-Value="Range.EndDateInclusive" /> Range End |
-<input type="time" @bind="WorkingHours.Start" /> start |
-<input type="time" @bind="WorkingHours.End" /> end |
-<InputCheckbox @bind-Value="showHours" /> hours |
-<InputCheckbox @bind-Value="usershowmins" /> mins |
-<InputNumber @onmousewheel="WheelEv" @bind-Value="dayWidth" /> day width |
-<InputNumber @bind-Value="snapToMins" min="1" step="1" /> snap (mins)
+<InputDate @bind-Value="Range.StartDate"/> Range Start |
+<InputDate @bind-Value="Range.EndDateInclusive"/> Range End |
+<input type="time" @bind="WorkingHours.Start"/> start |
+<input type="time" @bind="WorkingHours.End"/> end |
+<InputCheckbox @bind-Value="showHours"/> hours |
+<InputCheckbox @bind-Value="usershowmins"/> mins |
+<InputNumber @onmousewheel="WheelEv" @bind-Value="dayWidth"/> day width |
+<InputNumber @bind-Value="snapToMins" min="1" step="1"/> snap (mins)
 
-<div style="position:sticky; top:0; z-index:10; background:#fff9; backdrop-filter:saturate(150%) blur(4px); font:12px/1.2 system-ui; padding:.25rem .5rem; border:1px solid #ddd; width:max-content; border-radius:6px;">
+<div
+    style="position:sticky; top:0; z-index:10; background:#fff9; backdrop-filter:saturate(150%) blur(4px); font:12px/1.2 system-ui; padding:.25rem .5rem; border:1px solid #ddd; width:max-content; border-radius:6px;">
     <b>FPS:</b> @_latest.Fps
     &nbsp;|&nbsp; <b>long tasks:</b> @_latest.LongTasks
     &nbsp;|&nbsp; <b>max:</b> @_latest.Longest.ToString("0.0")ms
@@ -52,6 +157,7 @@
     &nbsp;|&nbsp; <b>lane DOM:</b> @_latest.DomNodes
     &nbsp;|&nbsp; <b>bars:</b> @machines.Sum(x => x.Routings.Count)
     &nbsp;|&nbsp; <b>renders:</b> @renderCount
+    &nbsp;|&nbsp; <b>max overlap:</b> @_globalLevels
 </div>
 
 <div class="container">
@@ -59,26 +165,28 @@
            @ondragstart:preventDefault
            style="
                --day-w:@($"{dayWidth}px");
-               --days:@DaysCount;
-               --machine-w:180px;
-               --action-w:56px;
-               --left-w: calc(var(--machine-w) + var(--action-w));
-               --mins-per-day:@(Math.Max(1, MinutesPerDay).ToString("0"));
-               --px-per-min: calc(var(--day-w) / var(--mins-per-day));
-               --hour-w: calc(var(--px-per-min) * 60);
-               --slot-w: calc(var(--px-per-min) * @MinutesPerSlot);
-               width: calc(var(--left-w) + (var(--day-w) * var(--days)));
+           --days:@DaysCount;
+           --machine-w:180px;
+           --action-w:56px;
+           --left-w: calc(var(--machine-w) + var(--action-w));
+           --mins-per-day:@(Math.Max(1, MinutesPerDay).ToString("0"));
+           --px-per-min: calc(var(--day-w) / var(--mins-per-day));
+           --hour-w: calc(var(--px-per-min) * 60);
+           --slot-w: calc(var(--px-per-min) * @MinutesPerSlot);
+           --bar-h:@($"{BarHeightPx}px");
+           --lane-h:@($"{LaneHeightPx}px");
+           width: calc(var(--left-w) + (var(--day-w) * var(--days)));
            ">
         <colgroup>
-            <col class="machine-col" style="width:var(--machine-w)" />
-            <col class="action-col"  style="width:var(--action-w)" />
-            <col class="timeline-col" style="width:calc(var(--day-w) * var(--days))" />
+            <col class="machine-col" style="width:var(--machine-w)"/>
+            <col class="action-col" style="width:var(--action-w)"/>
+            <col class="timeline-col" style="width:calc(var(--day-w) * var(--days))"/>
         </colgroup>
 
         <thead>
         <tr>
             <th class="machine-col" rowspan="@HeaderRowSpan">Machine</th>
-            <th class="action-col"  rowspan="@HeaderRowSpan">Action</th>
+            <th class="action-col" rowspan="@HeaderRowSpan">Action</th>
             <th class="timeline-head">
                 <div class="ruler days" style="width:calc(var(--day-w) * var(--days))">
                     @foreach (var date in Range.DaysInclusive)
@@ -112,7 +220,9 @@
         <Virtualize Items="machines" Context="m">
             <tr>
                 <td class="machine-col">@m.Name</td>
-                <td class="action-col"><button @onclick="() => OnMachineAction(m)">⋯</button></td>
+                <td class="action-col">
+                    <button @onclick="() => OnMachineAction(m)">⋯</button>
+                </td>
 
                 <td class="track-cell">
                     <div class="lane"
@@ -128,14 +238,27 @@
                             var width = WidthPx(r.TimeSpan.Start, r.TimeSpan.EndExclusive);
                             if (width > 0)
                             {
+                                var top = TopPxForLevel(r.Level);
                                 <div class="bar @(drag?.Routing == r ? "dragging" : "")"
-                                     style="@($"transform:translateX({left}px); width:{width}px")"
+                                     style="@($"top:{top}px; transform:translateX({left}px); width:{width}px; background:{r.Bg}; border:1px solid {r.Border}; color:{r.Text}")"
                                      @onpointerdown="(e) => BarDown(e, m, r, left, width)">
+
+                                    <div class="handle left"
+                                         @onpointerdown="(e) => ResizeStartDown(e, m, r, left, width)"
+                                         @onpointerdown:stopPropagation></div>
+
+                                    <div class="label">@r.Label</div>
+
+                                    <div class="handle right"
+                                         @onpointerdown="(e) => ResizeEndDown(e, m, r, left, width)"
+                                         @onpointerdown:stopPropagation></div>
                                 </div>
                             }
                         }
 
-                        <div class="bar preview" @ref="m.PreviewRef"></div>
+                        <div class="bar preview" @ref="m.PreviewRef">
+                            <div class="label"></div>
+                        </div>
                     </div>
                 </td>
             </tr>
@@ -146,6 +269,11 @@
 
 @code {
     const int MinutesPerSlot = 15;
+
+    const int BarHeightPx = 32;
+    const int BarGapPx = 3;
+    const int LanePadTopPx = 2;
+    const int LanePadBottomPx = 2;
 
     int dayWidth = 1000;
     int snapToMins = 5;
@@ -161,7 +289,12 @@
     TimeRange WorkingHours = new() { Start = new TimeOnly(8, 0), End = new TimeOnly(17, 0) };
 
     int renderCount = 0;
-    protected override bool ShouldRender() { renderCount++; return true; }
+
+    protected override bool ShouldRender()
+    {
+        renderCount++;
+        return true;
+    }
 
     List<Machine> machines =
     [
@@ -192,9 +325,36 @@
     double PxPerMinute => dayWidth / Math.Max(1.0, MinutesPerDay);
     double LaneWidthPx => dayWidth * DaysCount;
 
-    void OnMachineAction(Machine m) { }
+    int _globalLevels = 1;
+    int LaneHeightPx => LanePadTopPx + LanePadBottomPx + (_globalLevels * (BarHeightPx + BarGapPx));
+    int TopPxForLevel(int level) => LanePadTopPx + (level * (BarHeightPx + BarGapPx));
 
-    class Routing { public Guid Id = Guid.NewGuid(); public int Sequence; public DateRange TimeSpan = new(); }
+    void OnMachineAction(Machine m)
+    {
+    }
+
+    class Routing
+    {
+        public Guid Id = Guid.NewGuid();
+        public int Sequence;
+
+        public string Name = "";
+        public string MoNumber = "";
+
+        public string Bg = "#e8f0ff";
+        public string Border = "#9bbcff";
+        public string Text = "#1b2a4a";
+
+        public int Level;
+        public int PreferredLevel = -1;
+
+        public DateRange TimeSpan = new();
+
+        public string Label =>
+            string.IsNullOrWhiteSpace(Name) && string.IsNullOrWhiteSpace(MoNumber)
+                ? $"{Sequence:00}"
+                : $"{MoNumber} {Name}".Trim();
+    }
 
     class DateRange
     {
@@ -204,13 +364,21 @@
         public DateTime StartDate
         {
             get => Start.Date;
-            set { Start = value.Date; if (EndExclusive <= Start) EndExclusive = Start.AddDays(1); }
+            set
+            {
+                Start = value.Date;
+                if (EndExclusive <= Start) EndExclusive = Start.AddDays(1);
+            }
         }
 
         public DateTime EndDateInclusive
         {
             get => EndExclusive.Date.AddDays(-1);
-            set { EndExclusive = value.Date.AddDays(1); if (EndExclusive <= Start) EndExclusive = Start.AddDays(1); }
+            set
+            {
+                EndExclusive = value.Date.AddDays(1);
+                if (EndExclusive <= Start) EndExclusive = Start.AddDays(1);
+            }
         }
 
         public int DaysCount => (int)Math.Max(1, (EndExclusive.Date - Start.Date).TotalDays);
@@ -246,7 +414,7 @@
         }
     }
 
-    static Routing CreateRandomRouting(DateRange range, TimeRange hours, int minDurationMin = 30, int maxDurationMin = 240)
+    static Routing CreateRandomRouting(DateRange range, TimeRange hours, int seq, int minDurationMin = 30, int maxDurationMin = 240)
     {
         var rnd = Random.Shared;
 
@@ -255,7 +423,7 @@
 
         var workingMins = (int)Math.Max(0, (hours.End - hours.Start).TotalMinutes);
         if (workingMins <= 0)
-            return new Routing { TimeSpan = new DateRange { Start = day, EndExclusive = day.AddMinutes(1) } };
+            return new Routing { Sequence = seq, TimeSpan = new DateRange { Start = day, EndExclusive = day.AddMinutes(1) } };
 
         var duration = Math.Clamp(rnd.Next(minDurationMin, maxDurationMin + 1), 1, workingMins);
         var latestStart = Math.Max(0, workingMins - duration);
@@ -264,10 +432,116 @@
         var start = day.AddHours(hours.Start.Hour).AddMinutes(hours.Start.Minute + startOffset);
         var end = start.AddMinutes(duration);
 
-        return new Routing { TimeSpan = new DateRange { Start = start, EndExclusive = end } };
+        var verbs = new[] { "Turn", "Mill", "Drill", "Tap", "Grind", "Cut", "Weld", "Inspect", "Assemble", "Pack" };
+        var parts = new[] { "Frame", "Shaft", "Bracket", "Housing", "Plate", "Rotor", "Stator", "Base", "Arm", "Cover" };
+
+        var hues = new[] { ("#e8f0ff", "#9bbcff", "#1b2a4a"), ("#e8fff3", "#86d8b8", "#0f3b2c"), ("#fff1e8", "#ffb17a", "#4a2a1b"), ("#f3e8ff", "#c09bff", "#2f1b4a") };
+        var c = hues[rnd.Next(hues.Length)];
+
+        return new Routing
+        {
+            Sequence = seq,
+            MoNumber = $"MO{rnd.Next(100000, 999999)}",
+            Name = $"{verbs[rnd.Next(verbs.Length)]} {parts[rnd.Next(parts.Length)]}",
+            Bg = c.Item1,
+            Border = c.Item2,
+            Text = c.Item3,
+            TimeSpan = new DateRange { Start = start, EndExclusive = end }
+        };
     }
 
-    List<Routing> RandomRoutings(int count) => Enumerable.Range(0, count).Select(_ => CreateRandomRouting(Range, WorkingHours)).ToList();
+    void RecomputeLevels()
+    {
+        _globalLevels = 1;
+
+        foreach (var m in machines)
+        {
+            AssignLevelsWithPreferences(m.Routings);
+
+            var max = m.Routings.Count == 0 ? 1 : (m.Routings.Max(r => r.Level) + 1);
+            _globalLevels = Math.Max(_globalLevels, max);
+        }
+    }
+
+    static void AssignLevelsWithPreferences(List<Routing> routings)
+    {
+        routings.Sort((a, b) => a.TimeSpan.Start.CompareTo(b.TimeSpan.Start));
+
+        var levelEnds = new List<DateTime>();
+
+        foreach (var r in routings)
+        {
+            var s = r.TimeSpan.Start;
+            var e = r.TimeSpan.EndExclusive;
+
+            var pref = r.PreferredLevel < 0 ? r.Level : r.PreferredLevel;
+            if (pref < 0) pref = 0;
+
+            while (levelEnds.Count <= pref)
+                levelEnds.Add(DateTime.MinValue);
+
+            if (levelEnds[pref] <= s)
+            {
+                r.Level = pref;
+                levelEnds[pref] = e;
+                continue;
+            }
+
+            var placed = false;
+            for (var i = 0; i < levelEnds.Count; i++)
+            {
+                if (levelEnds[i] <= s)
+                {
+                    r.Level = i;
+                    levelEnds[i] = e;
+                    placed = true;
+                    break;
+                }
+            }
+
+            if (!placed)
+            {
+                r.Level = levelEnds.Count;
+                levelEnds.Add(e);
+            }
+        }
+    }
+
+    static bool Overlaps(DateTime aStart, DateTime aEnd, DateTime bStart, DateTime bEnd) =>
+        aStart < bEnd && bStart < aEnd;
+
+    int DesiredLevelFromOffsetY(double offsetY)
+    {
+        var slot = BarHeightPx + BarGapPx;
+        var raw = (int)Math.Floor((offsetY - LanePadTopPx) / slot);
+        return Math.Clamp(raw, 0, Math.Max(0, _globalLevels - 1));
+    }
+
+    int FindBestLevel(Machine target, DateTime s, DateTime e, Routing moving, int preferredLevel)
+    {
+        var max = Math.Max(1, _globalLevels);
+
+        bool LevelOk(int level)
+        {
+            foreach (var r in target.Routings)
+            {
+                if (ReferenceEquals(r, moving)) continue;
+                if (r.Level != level) continue;
+                if (Overlaps(s, e, r.TimeSpan.Start, r.TimeSpan.EndExclusive)) return false;
+            }
+
+            return true;
+        }
+
+        if (preferredLevel >= 0 && preferredLevel < max && LevelOk(preferredLevel))
+            return preferredLevel;
+
+        for (var level = 0; level < max; level++)
+            if (LevelOk(level))
+                return level;
+
+        return max - 1;
+    }
 
     protected override void OnInitialized()
     {
@@ -278,7 +552,10 @@
         for (var i = 0; i < machines.Count; i++)
             machines[i].Index = i;
 
-        machines.ForEach(x => x.Routings = RandomRoutings(20));
+        foreach (var m in machines)
+            m.Routings = Enumerable.Range(1, 20).Select(seq => CreateRandomRouting(Range, WorkingHours, seq)).ToList();
+
+        RecomputeLevels();
     }
 
     class Machine(string name)
@@ -319,20 +596,44 @@
         return DayWorkingStart(baseDay).AddMinutes(inDay);
     }
 
-    double SnapLeftPx(double leftPx, double widthPx)
+    double SnapPx(double px)
     {
         var snap = Math.Max(1, snapToMins);
         var snapPx = PxPerMinute * snap;
-        var snapped = Math.Round(leftPx / snapPx) * snapPx;
-        return Math.Clamp(snapped, 0, LaneWidthPx - widthPx);
+        return Math.Round(px / snapPx) * snapPx;
     }
 
-    record DragState(Machine Origin, Routing Routing, long PointerId, double GrabOffsetPx, double WidthPx);
+    double ClampLeft(double leftPx, double widthPx) => Math.Clamp(leftPx, 0, LaneWidthPx - widthPx);
+
+    double ClampWidth(double widthPx)
+    {
+        var minPx = Math.Max(1.0, PxPerMinute * Math.Max(1, snapToMins));
+        return Math.Clamp(widthPx, minPx, LaneWidthPx);
+    }
+
+    enum DragMode
+    {
+        Move,
+        ResizeStart,
+        ResizeEnd
+    }
+
+    record DragState(
+        Machine Origin,
+        Routing Routing,
+        long PointerId,
+        DragMode Mode,
+        double GrabOffsetPx,
+        double FixedLeftPx,
+        double FixedRightPx,
+        int StartLevel
+    );
 
     sealed class LaneHit
     {
         public int idx { get; set; }
         public double offsetX { get; set; }
+        public double offsetY { get; set; }
     }
 
     DragState? drag;
@@ -340,7 +641,7 @@
     Machine? _previewMachine;
     IJSObjectReference? _ui;
 
-    async Task ShowPreviewAsync(Machine m, double leftPx, double widthPx)
+    async Task ShowPreviewAsync(Machine m, double leftPx, double widthPx, int topPx, Routing r)
     {
         if (_ui is null) return;
 
@@ -348,7 +649,7 @@
             await _ui.InvokeVoidAsync("hidePreview", _previewMachine.PreviewRef);
 
         _previewMachine = m;
-        await _ui.InvokeVoidAsync("showPreview", m.PreviewRef, leftPx, widthPx);
+        await _ui.InvokeVoidAsync("showPreview", m.PreviewRef, leftPx, widthPx, topPx, r.Label, r.Bg, r.Border, r.Text);
     }
 
     async Task HidePreviewAsync(Machine m)
@@ -366,20 +667,30 @@
         return hit;
     }
 
-    Task BarDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx) => BarDownImpl(e, m, r, leftPx, widthPx);
-    async Task BarDownImpl(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx)
+    Task BarDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx) => StartDrag(e, m, r, leftPx, widthPx, DragMode.Move);
+    Task ResizeStartDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx) => StartDrag(e, m, r, leftPx, widthPx, DragMode.ResizeStart);
+    Task ResizeEndDown(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx) => StartDrag(e, m, r, leftPx, widthPx, DragMode.ResizeEnd);
+
+    async Task StartDrag(PointerEventArgs e, Machine m, Routing r, double leftPx, double widthPx, DragMode mode)
     {
-        drag = new(m, r, e.PointerId, e.OffsetX, widthPx);
+        var fixedLeft = leftPx;
+        var fixedRight = leftPx + widthPx;
+        var grab = mode == DragMode.Move ? e.OffsetX : 0;
+
+        r.PreferredLevel = r.Level;
+
+        drag = new(m, r, e.PointerId, mode, grab, fixedLeft, fixedRight, r.Level);
         _lastHitIdx = m.Index;
 
         if (_ui is not null)
             await _ui.InvokeVoidAsync("capture", m.LaneRef, e.PointerId);
 
-        await ShowPreviewAsync(m, leftPx, widthPx);
+        await ShowPreviewAsync(m, leftPx, widthPx, TopPxForLevel(r.Level), r);
         StateHasChanged();
     }
 
     Task LaneMove(PointerEventArgs e) => LaneMoveImpl(e);
+
     async Task LaneMoveImpl(PointerEventArgs e)
     {
         if (drag is null) return;
@@ -390,13 +701,42 @@
         _lastHitIdx = hit.idx;
         var target = machines[_lastHitIdx];
 
-        var proposedLeft = hit.offsetX - drag.GrabOffsetPx;
-        var snapped = SnapLeftPx(proposedLeft, drag.WidthPx);
+        double left;
+        double width;
 
-        await ShowPreviewAsync(target, snapped, drag.WidthPx);
+        if (drag.Mode == DragMode.Move)
+        {
+            var proposedLeft = hit.offsetX - drag.GrabOffsetPx;
+            width = WidthPx(drag.Routing.TimeSpan.Start, drag.Routing.TimeSpan.EndExclusive);
+            left = ClampLeft(SnapPx(proposedLeft), width);
+        }
+        else if (drag.Mode == DragMode.ResizeStart)
+        {
+            left = SnapPx(hit.offsetX);
+            var right = drag.FixedRightPx;
+            width = ClampWidth(right - left);
+            left = ClampLeft(left, width);
+        }
+        else
+        {
+            left = drag.FixedLeftPx;
+            var right = SnapPx(hit.offsetX);
+            width = ClampWidth(right - left);
+            left = ClampLeft(left, width);
+        }
+
+        var s = TimeFromPx(left);
+        var end = TimeFromPx(left + width);
+
+        var desiredLevel = DesiredLevelFromOffsetY(hit.offsetY);
+        var level = FindBestLevel(target, s, end, drag.Routing, desiredLevel);
+        var top = TopPxForLevel(level);
+
+        await ShowPreviewAsync(target, left, width, top, drag.Routing);
     }
 
     Task LaneUp(PointerEventArgs e) => LaneUpImpl(e);
+
     async Task LaneUpImpl(PointerEventArgs e)
     {
         if (drag is null) return;
@@ -407,12 +747,35 @@
 
         var target = machines[_lastHitIdx];
 
-        var offsetX = hit?.offsetX ?? 0;
-        var proposedLeft = offsetX - drag.GrabOffsetPx;
-        var startSnapped = SnapLeftPx(proposedLeft, drag.WidthPx);
+        double left;
+        double width;
 
-        var newStart = TimeFromPx(startSnapped);
-        var newEnd = TimeFromPx(startSnapped + drag.WidthPx);
+        if (drag.Mode == DragMode.Move)
+        {
+            var offsetX = hit?.offsetX ?? 0;
+            var proposedLeft = offsetX - drag.GrabOffsetPx;
+            width = WidthPx(drag.Routing.TimeSpan.Start, drag.Routing.TimeSpan.EndExclusive);
+            left = ClampLeft(SnapPx(proposedLeft), width);
+        }
+        else if (drag.Mode == DragMode.ResizeStart)
+        {
+            var offsetX = hit?.offsetX ?? drag.FixedLeftPx;
+            left = SnapPx(offsetX);
+            var right = drag.FixedRightPx;
+            width = ClampWidth(right - left);
+            left = ClampLeft(left, width);
+        }
+        else
+        {
+            left = drag.FixedLeftPx;
+            var offsetX = hit?.offsetX ?? drag.FixedRightPx;
+            var right = SnapPx(offsetX);
+            width = ClampWidth(right - left);
+            left = ClampLeft(left, width);
+        }
+
+        var newStart = TimeFromPx(left);
+        var newEnd = TimeFromPx(left + width);
 
         if (target != drag.Origin)
         {
@@ -422,6 +785,13 @@
 
         drag.Routing.TimeSpan.Start = newStart;
         drag.Routing.TimeSpan.EndExclusive = newEnd;
+
+        if (hit is not null)
+            drag.Routing.PreferredLevel = DesiredLevelFromOffsetY(hit.offsetY);
+        else
+            drag.Routing.PreferredLevel = drag.StartLevel;
+
+        RecomputeLevels();
 
         if (_ui is not null)
             await _ui.InvokeVoidAsync("release", drag.Origin.LaneRef, drag.PointerId);
@@ -435,9 +805,12 @@
     }
 
     Task LaneCancel(PointerEventArgs e) => LaneCancelImpl(e);
+
     async Task LaneCancelImpl(PointerEventArgs e)
     {
         if (drag is null) return;
+
+        drag.Routing.PreferredLevel = drag.StartLevel;
 
         if (_ui is not null)
             await _ui.InvokeVoidAsync("release", drag.Origin.LaneRef, drag.PointerId);
@@ -459,8 +832,17 @@
     System.Timers.Timer? _perfTimer;
     IJSObjectReference? _perf;
     PerfSnap _latest = new();
+
     record PerfSnap(double Fps = 0, int LongTasks = 0, double Longest = 0, int PointerMoves = 0, int DomNodes = 0);
-    public class PerfDto { public double fps { get; set; } public int longTasks { get; set; } public double longest { get; set; } public int pmCount { get; set; } public int domNodes { get; set; } }
+
+    public class PerfDto
+    {
+        public double fps { get; set; }
+        public int longTasks { get; set; }
+        public double longest { get; set; }
+        public int pmCount { get; set; }
+        public int domNodes { get; set; }
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -503,4 +885,5 @@
         _ = _ui?.DisposeAsync();
         _ = _perf?.DisposeAsync();
     }
+
 }
